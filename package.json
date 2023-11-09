@@ -1,0 +1,64 @@
+{
+  "name": "@tty-pt/ndc",
+  "version": "0.1.3",
+  "description": "ndc example project",
+  "main": "./htdocs/ndc.umd.js",
+  "module": "./htdocs/ndc.js",
+  "entry": "./ndc.js",
+  "template": "./index.html",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "scripts test",
+    "build": "mkdir htdocs 2>/dev/null ; cp ndc.css htdocs/ && scripts build",
+    "watch": "scripts watch",
+    "lint": "scripts lint",
+    "postinstall": "make"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tty-pt/ndc.git"
+  },
+  "author": "quirinpa",
+  "license": "BSD-2-Clause",
+  "bugs": {
+    "url": "https://github.com/tty-pt/ndc/issues"
+  },
+  "homepage": "",
+  "devDependencies": {
+    "@tty-pt/scripts": "^0.4.3",
+    "@types/node": "^20.10.6",
+    "webpack": "^5.75.0"
+  },
+  "peerDependencies": {
+    "xterm": "^5.1.0",
+    "xterm-addon-fit": "^0.7.0",
+    "xterm-addon-image": "^0.4.0",
+    "xterm-addon-web-links": "^0.8.0",
+    "xterm-addon-webgl": "^0.14.0"
+  },
+  "keywords": [
+    "ndc",
+    "terminal",
+    "tty",
+    "WebSocket",
+    "WebSockets",
+    "ws",
+    "session",
+    "mux",
+    "multiplexer"
+  ],
+  "serve": [
+    "art"
+  ],
+  "bin": {
+    "ndc": "./ndc-cli.js"
+  },
+  "files": [
+    "htdocs",
+    "src/*.c",
+    "include",
+    "Makefile"
+  ]
+}

@@ -1,0 +1,10 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: ndclib
+Description: Terminal multiplexing server library
+Version: 1.0.0
+Libs: -L${libdir} -lc -ldb -lcrypto -lrt -lssl -lndc
+Cflags: -I${includedir}/ndclib

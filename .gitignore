@@ -1,0 +1,7 @@
+*.o
+*.so
+/ndc
+/node_modules
+/htdocs
+/.clangd
+/compile_commands.json
