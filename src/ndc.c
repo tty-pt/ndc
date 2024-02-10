@@ -8,11 +8,11 @@ struct cmd_slot cmds[] = {
 	{
 		.name = "GET", 
 		.cb = &do_GET,
-		.flags = CF_NOAUTH,
+		.flags = CF_NOAUTH | CF_NOTRIM,
 	}, {
 		.name = "POST", 
 		.cb = &do_GET,
-		.flags = CF_NOAUTH,
+		.flags = CF_NOAUTH | CF_NOTRIM,
 	}, {
 		.name = "sh", 
 		.cb = &do_sh,
@@ -61,7 +61,10 @@ usage(char *prog) {
 int
 main(int argc, char *argv[])
 {
-	struct ndc_config config = { .flags = 0 };
+	struct ndc_config config = {
+		.flags = 0,
+		.auto_cmd = "sh",
+	};
 	register char c;
 
 	while ((c = getopt(argc, argv, "?dvk:c:uCrp:")) != -1) {

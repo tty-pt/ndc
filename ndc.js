@@ -1,4 +1,4 @@
-import { Terminal } from "xterm";
+// import Terminal from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
 
@@ -62,7 +62,7 @@ window.onresize = () => {
 };
 
 export
-const term = new Terminal({
+const term = new globalThis.Terminal({
   convertEol: true,
   fontSize: 13,
   fontFamily: 'Consolas,Liberation Mono,Menlo,Courier,monospace',
@@ -174,7 +174,7 @@ function ab2str(arr) {
 }
 
 let externalOnMessage = function (_ev, _arr) {
-  return false;
+  return true;
 };
 
 export
@@ -220,4 +220,4 @@ function onMessage(ev) {
   }
 }
 
-globalThis.NDC = { connect, open };
+export default { connect, open, setOnMessage, term };

@@ -131,18 +131,18 @@ static void pty_open(int fd) {
 	fprintf(stderr, "pty_open %d %d\n", fd, d->pty);
 
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
-		err(1, "descr_new fcntl F_SETFL O_NONBLOCK");
+		err(1, "pty_open fcntl F_SETFL O_NONBLOCK");
 
 	d->pty = posix_openpt(O_RDWR | O_NOCTTY);
 
 	if (d->pty == -1)
-		err(1, "descr_new posix_openpt");
+		err(1, "pty_open posix_openpt");
 
 	if (grantpt(d->pty) == -1)
-		err(1, "descr_new grantpt");
+		err(1, "pty_open grantpt");
 
 	if (unlockpt(d->pty) == -1)
-		err(1, "descr_new unlockpt");
+		err(1, "pty_open unlockpt");
 
 	int flags = fcntl(d->pty, F_GETFL, 0);
 	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
@@ -151,7 +151,6 @@ static void pty_open(int fd) {
 	descr_map[d->pty].fd = fd;
 	descr_map[d->pty].pty = -1;
 	FD_SET(d->pty, &fds_active);
-	FD_SET(d->pty, &fds_read);
 }
 
 static void descr_new() {
@@ -164,6 +163,8 @@ static void descr_new() {
 		perror("descr_new");
 		return;
 	}
+
+	fprintf(stderr, "descr_new %d\n", fd);
 
 	FD_SET(fd, &fds_active);
 
@@ -193,13 +194,14 @@ static void descr_new() {
 static void
 cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 {
+	static unsigned char buf[BUFSIZ * 2];
 	struct cmd cmd;
-	register char *p = input;
+	register char *p = buf;
 	int argc = 0;
 
-	p[len] = '\0';
+	memcpy(buf, input, len);
 
-	fprintf(stderr, "cmd_new %d %lu '%s'\n", fd, len, input);
+	p[len] = '\0';
 
 	if (!*p || !isalnum(*p)) {
 		argv[0] = "";
@@ -219,6 +221,7 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 		argv[i] = "";
 
 	argv[argc] = p + 2;
+	fprintf(stderr, "cmd_new %d %lu %d\n", fd, len, argc);
 
 	*argc_r = argc;
 }
@@ -243,6 +246,7 @@ int
 ndc_read(int fd, void *data, size_t len)
 {
 	struct descr *d = &descr_map[fd];
+	fprintf(stderr, "ndc_read %d %lu\n", fd, len);
 	return d->flags & DF_WEBSOCKET ? ws_read(fd, data, len) : ndc_low_read(fd, data, len);
 }
 
@@ -250,7 +254,13 @@ int
 ndc_write(int fd, void *data, size_t len)
 {
 	struct descr *d = &descr_map[fd];
-	return d->flags & DF_WEBSOCKET ? ws_write(fd, data, len, d->flags) : ndc_low_write(fd, data, len);
+	fprintf(stderr, "ndc_write %d %lu %d\n", fd, len, d->flags);
+	if (d->flags & DF_WERROR)
+		return -1;
+	int ret = d->flags & DF_WEBSOCKET ? ws_write(fd, data, len, d->flags) : ndc_low_write(fd, data, len);
+	if (ret == -1)
+		d->flags |= DF_WERROR;
+	return ret;
 }
 
 int
@@ -294,17 +304,17 @@ cmd_proc(int fd, int argc, char *argv[])
 		return;
 
 	unsigned long long old = d->loc;
-	if (cmd_i) {
-		if (!(cmd_i->flags & CF_NOTRIM)) {
-			// i know this looks buggy
-			// but it probably isn't
-			char *p = &argv[argc][-2];
-			if (*p == '\r') *p = '\0';
-			argv[argc] = "";
-		}
+	if ((!cmd_i && argc) || !(cmd_i->flags & CF_NOTRIM)) {
+		// i know this looks buggy
+		// but it probably isn't
+		char *p = &argv[argc][-2];
+		if (*p == '\r') *p = '\0';
+		argv[argc] = "";
+	}
 
+	if (cmd_i)
 		cmd_i->cb(fd, argc, argv);
-	} else
+	else
 		ndc_vim(fd, argc, argv);
 
 	if (old != d->loc)
@@ -341,6 +351,26 @@ pty_close(int fd) {
 }
 
 int
+cmd_parse(int fd, char *cmd, size_t len) {
+	int argc;
+	char *argv[CMD_ARGM];
+
+	fprintf(stderr, "CMD_PARSE %d %lu %s\n", fd, len, cmd);
+
+	cmd_new(&argc, argv, fd, cmd, len);
+
+	if (!argc)
+		return 0;
+
+	cmd_proc(fd, argc, argv);
+
+	if (argc != 3)
+		return 0;
+
+	return len;
+}
+
+int
 descr_read(int fd)
 {
 	struct descr *d = &descr_map[fd];
@@ -355,7 +385,8 @@ descr_read(int fd)
 		warn("ws_read: failed - will close");
 	case 0: return -1;
 	}
-	fprintf(stderr, "descr_read %d %s\n", d->fd, d->cmd);
+
+	fprintf(stderr, "descr_read %d %d\n", d->fd, ret);
 
 	int i = 0, li = 0;
 
@@ -399,20 +430,7 @@ descr_read(int fd)
 		}
 	}
 
-	int argc;
-	char *argv[CMD_ARGM];
-
-	cmd_new(&argc, argv, fd, (char *) d->cmd, ret);
-
-	if (!argc)
-		return 0;
-
-	cmd_proc(fd, argc, argv);
-
-	if (argc != 3)
-		return 0;
-
-	return ret;
+	return cmd_parse(fd, (char *) d->cmd, ret);
 }
 
 static void
@@ -457,7 +475,7 @@ void descr_proc() {
 			;
 		else if (i == srv_fd)
 			descr_new();
-		else if (descr_map[i].pty != -1 && descr_read(i) < 0)
+		else if (descr_map[i].flags & DF_WERROR || descr_map[i].pty != -1 && descr_read(i) < 0)
 			ndc_close(i);
 		else
 			pty_read(descr_map[i].fd);
@@ -499,7 +517,7 @@ int ndc_main(struct ndc_config *config_r) {
 	if (ndc_srv_flags & NDC_ROOT && geteuid())
 		errx(1, "need root privileges");
 
-	if (ndc_srv_flags & NDC_CHROOT) {
+	if (config.chroot) {
 		char *user = config.user ? config.user : "www";
 		struct passwd *pw = getpwnam(user);
 
@@ -535,6 +553,7 @@ int ndc_main(struct ndc_config *config_r) {
 	atexit(cleanup);
 	signal(SIGTERM, sig_shutdown);
 	signal(SIGINT, sig_shutdown);
+	signal(SIGPIPE, SIG_IGN);
 
 	srv_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -557,13 +576,10 @@ int ndc_main(struct ndc_config *config_r) {
 	if (bind(srv_fd, (struct sockaddr *) &server, sizeof(server)))
 		err(4, "bind");
 
-	FD_ZERO(&fds_read);
-	FD_ZERO(&fds_write);
 	descr_map[0].fd = srv_fd;
 
 	listen(srv_fd, 5);
 
-	FD_SET(srv_fd, &fds_read);
 	FD_SET(srv_fd, &fds_active);
 
 	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
@@ -877,16 +893,15 @@ do_GET(int fd, int argc, char *argv[])
 	int req_hd = headers_get(&body_start, argv[argc]);
 	uid_t uid;
 	char *ws_key = SHASH_GET(req_hd, "Sec-WebSocket-Key");
+	fprintf(stderr, "do_GET %d %d %s %s\n", fd, argc, ws_key, argv[argc]);
 
 	if (ws_key) {
 		if (ws_init(fd, ws_key))
 			return;
 		d->flags |= DF_WEBSOCKET;
 		TELNET_CMD(IAC, DO, TELOPT_NAWS);
-		uid = getuid();
-		pw = getpwuid(uid);
-		char *args[] = { pw->pw_shell, NULL };
-		ndc_pty(fd, args);
+		if (config.auto_cmd)
+			cmd_parse(fd, config.auto_cmd, strlen(config.auto_cmd));
 		return;
 	} else if (argc < 2 || strstr(argv[1], "..")) {
 		ndc_close(fd);
@@ -916,11 +931,13 @@ do_GET(int fd, int argc, char *argv[])
 	char *body = argv[argc] + body_start + 1;
 	off_t total;
 	int want_fd = -1;
-	sprintf(filename, ".%s", argv[1]);
+	sprintf(filename, ".%s%s", strncmp(argv[1], "/node_modules", 13) ? "" : "./.", argv[1]);
 	url_decode(filename);
 
 	if (!argv[1][1])
 		strcpy(filename, "./index.html");
+
+	fprintf(stderr, "GET %d %s %s\n", fd, argv[1], filename);
 
 	if (stat(filename, &stat_buf)) {
 		status = "404 Not Found";
@@ -933,6 +950,7 @@ do_GET(int fd, int argc, char *argv[])
 		ndc_command(args, do_GET_cb, &fd, body, strlen(body));
 		goto end;
 	} else {
+		errno = 0;
 		char *ext = filename, *s;
 		for (s = ext; *s; s++)
 			if (*s == '.')
@@ -977,11 +995,10 @@ do_GET(int fd, int argc, char *argv[])
 			goto end;
 
 		ssize_t len = 0;
-		char body[BUFSIZ];
+		char body[BUFSIZ * 2];
 
 		while ((len = read(want_fd, body, sizeof(body))) > 0)
 			ndc_write(fd, body, len);
-
 	}
 end:
 	chdir("..");

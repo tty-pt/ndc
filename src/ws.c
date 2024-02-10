@@ -101,7 +101,6 @@ ws_write(int cfd, const void *data, size_t n, int flags)
 	size_t len = sizeof(head);
 	int smallest = n < 126;
 	char frame[2 + (smallest ? 0 : sizeof(uint64_t)) + n];
-	fprintf(stderr, "writting %lu bytes to %d\n", n, cfd);
 
 	if (smallest) {
 		head[1] |= n;

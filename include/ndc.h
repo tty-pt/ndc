@@ -8,6 +8,7 @@ enum descr_flags {
 	DF_CONNECTED = 1,
 	DF_BINARY = 0x2,
 	DF_WEBSOCKET = 4,
+	DF_WERROR = 8,
 	DF_FIN = 0x80,
 };
 
@@ -15,7 +16,7 @@ enum ndc_srv_flags {
 	NDC_WAKE = 1,
 	NDC_SSL = 2,
 	NDC_ROOT = 4,
-	NDC_CHROOT = 8,
+	/* NDC_CHROOT = 8, */
 	NDC_DETACH = 16,
 };
 
@@ -24,7 +25,9 @@ struct ndc_config {
 	     * chroot,
 	     * chdir,
 	     * ssl_crt, 
-	     * ssl_key;
+	     * ssl_key,
+	     * auto_cmd;
+	
 	unsigned flags, port;
 };
 

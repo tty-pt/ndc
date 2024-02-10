@@ -1,11 +1,17 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.1.3",
+  "version": "0.1.8",
   "description": "ndc example project",
-  "main": "./htdocs/ndc.umd.js",
-  "module": "./htdocs/ndc.js",
+  "main": "htdocs/ndc.umd.js",
+  "module": "htdocs/ndc.js",
   "entry": "./ndc.js",
   "template": "./index.html",
+  "library": true,
+  "external": {
+    "!xterm": "Terminal",
+    "xterm-addon-fit": "FitAddon",
+    "xterm-addon-web-links": "WebLinksAddon"
+  },
   "directories": {
     "doc": "docs"
   },
@@ -27,16 +33,14 @@
   },
   "homepage": "",
   "devDependencies": {
-    "@tty-pt/scripts": "^0.4.3",
+    "@tty-pt/scripts": "^0.4.11",
     "@types/node": "^20.10.6",
     "webpack": "^5.75.0"
   },
   "peerDependencies": {
     "xterm": "^5.1.0",
     "xterm-addon-fit": "^0.7.0",
-    "xterm-addon-image": "^0.4.0",
-    "xterm-addon-web-links": "^0.8.0",
-    "xterm-addon-webgl": "^0.14.0"
+    "xterm-addon-web-links": "^0.8.0"
   },
   "keywords": [
     "ndc",
@@ -56,6 +60,7 @@
     "ndc": "./ndc-cli.js"
   },
   "files": [
+    "ndc.css",
     "htdocs",
     "src/*.c",
     "include",

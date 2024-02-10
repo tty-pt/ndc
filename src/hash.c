@@ -81,7 +81,7 @@ hash_del(int hd, void *key_r, size_t len)
 void
 shash_table(int hd, char *table[]) {
 	for (register char **t = table; *t; t++)
-		SHASH_PUT(hd, *t, *t + strlen(*t));
+		SHASH_PUT(hd, *t, *t + strlen(*t) + 1);
 }
 
 void
