@@ -67,7 +67,7 @@ main(int argc, char *argv[])
 	};
 	register char c;
 
-	while ((c = getopt(argc, argv, "?dvk:c:uCrp:")) != -1) {
+	while ((c = getopt(argc, argv, "?dvk:c:uC:srp:")) != -1) {
 		switch (c) {
 		case 'd':
 			config.flags |= NDC_DETACH;
@@ -84,11 +84,11 @@ main(int argc, char *argv[])
 			break;
 			
 		case 'C':
-			config.chdir = strdup(optarg);
+			config.chroot = strdup(optarg);
 			break;
-			
-		case 'u':
-			config.user = strdup(optarg);
+
+		case 's':
+			config.serve = strdup(optarg);
 			break;
 
 		case 'r':

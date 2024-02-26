@@ -21,9 +21,8 @@ enum ndc_srv_flags {
 };
 
 struct ndc_config {
-	char * user,
-	     * chroot,
-	     * chdir,
+	char * chroot,
+	     * serve,
 	     * ssl_crt, 
 	     * ssl_key,
 	     * auto_cmd;
@@ -74,5 +73,6 @@ int ndc_flags(int fd);
 void ndc_close(int fd);
 void ndc_set_flags(int fd, int flags);
 void ndc_move(int fd, unsigned long long loc);
+void ndc_auth(int fd, char *username);
 
 #endif

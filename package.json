@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "ndc example project",
   "main": "htdocs/ndc.umd.js",
   "module": "htdocs/ndc.js",
@@ -33,7 +33,7 @@
   },
   "homepage": "",
   "devDependencies": {
-    "@tty-pt/scripts": "^0.4.11",
+    "@tty-pt/scripts": "^0.4.13",
     "@types/node": "^20.10.6",
     "webpack": "^5.75.0"
   },

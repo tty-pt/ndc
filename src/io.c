@@ -46,6 +46,7 @@ struct descr {
 	int fd, flags, pty, pid;
 	unsigned long long loc;
 	unsigned char cmd[BUFSIZ * 2];
+	char username[BUFSIZ];
 	struct winsize wsz;
 	struct termios tty;
 } descr_map[FD_SETSIZE];
@@ -68,6 +69,7 @@ static fd_set fds_read, fds_active, fds_write;
 static size_t cmds_len = 0;
 long long dt, tack = 0;
 SSL_CTX *ssl_ctx;
+char serve[BUFSIZ];
 
 void
 ndc_close(int fd)
@@ -518,26 +520,13 @@ int ndc_main(struct ndc_config *config_r) {
 		errx(1, "need root privileges");
 
 	if (config.chroot) {
-		char *user = config.user ? config.user : "www";
-		struct passwd *pw = getpwnam(user);
-
-		if (pw == NULL)
-			err(1, "nds_main unknown user");
-
 		if (chroot(config.chroot) != 0)
 			err(1, "ndc_main chroot");
 
-		if (config.chdir && chdir(config.chdir) != 0)
+		/* if (config.chdir && chdir(config.chdir) != 0) */
+		if (chdir("/") != 0)
 			err(1, "ndc_main chdir");
-
-		if (setgroups(1, &pw->pw_gid) ||
-				setegid(pw->pw_gid) ||
-				seteuid(pw->pw_uid))
-
-			err(1, "can't drop priviledges");
-
-	} else if (config.chdir && chdir(config.chdir) != 0)
-		err(1, "ndc_main chdir");
+	}
 
 	cmds_init();
 	mime_hd = SHASH_INIT();
@@ -567,6 +556,9 @@ int ndc_main(struct ndc_config *config_r) {
 	opt = 1;
 	if (setsockopt(srv_fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt)) < 0)
 		err(1, "srv_fd setsockopt SO_KEEPALIVE");
+
+	if (fcntl(srv_fd, F_SETFL, O_NONBLOCK) == -1)
+		err(1, "srv_fd fcntl F_SETFL O_NONBLOCK");
 
 	struct sockaddr_in server;
 	server.sin_family = AF_INET;
@@ -643,6 +635,59 @@ void cleanup_handler(int sig) {
 	}
 }
 
+void drop_priviledges(int fd) {
+	struct descr *d = &descr_map[fd];
+
+	if (!config.chroot)
+		return;
+	
+	if (!(d->flags & DF_CONNECTED))
+		exit(1);
+
+
+	struct passwd *pw = getpwnam(d->username);
+	if (!pw)
+		exit(1);
+
+	uid_t new_uid = pw->pw_uid;
+	gid_t new_gid = pw->pw_gid;
+
+	if (setgroups(0, NULL) != 0) {
+		perror("drop_priviledges failed to drop supplementary group IDs");
+		exit(1);
+	}
+
+	if (setgid(new_gid) != 0) {
+		perror("drop_priviledges failed to set GID");
+		exit(1);
+	}
+
+	if (setuid(new_uid) != 0) {
+		perror("drop_priviledges failed to set UID");
+		exit(1);
+	}
+
+	if (setenv("HOME", pw->pw_dir, 1) != 0) {
+		perror("drop_priviledges Failed to set HOME environment variable");
+		exit(1);
+	}
+
+	if (setenv("USER", pw->pw_name, 1) != 0) {
+		perror("drop_priviledges Failed to set USER environment variable");
+		exit(1);
+	}
+
+	if (setenv("SHELL", pw->pw_shell, 1) != 0) {
+		perror("drop_priviledges Failed to set SHELL environment variable");
+		exit(1);
+	}
+
+	if (setenv("PATH", "/bin:/usr/bin", 1) != 0) {
+		perror("drop_priviledges Failed to set PATH environment variable");
+		exit(1);
+	}
+}
+
 int
 command_pty(int cfd, struct winsize *ws, char * const args[])
 {
@@ -685,6 +730,8 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		dup2(slave_fd, STDOUT_FILENO);
 		dup2(slave_fd, STDERR_FILENO);
 		close(d->pty);
+
+		drop_priviledges(cfd);
 
 		execvp(args[0], args);
 		perror("execvp");
@@ -930,8 +977,30 @@ do_GET(int fd, int argc, char *argv[])
 	char filename[64];
 	char *body = argv[argc] + body_start + 1;
 	off_t total;
-	int want_fd = -1;
-	sprintf(filename, ".%s%s", strncmp(argv[1], "/node_modules", 13) ? "" : "./.", argv[1]);
+	int want_fd = -1, lost = 1;
+	*filename = '\0';
+
+	if (config.serve) for (char *s = config.serve, *e; *s;) {
+		if ((e = strchr(s, ':'))) {
+			if (!strncmp(argv[1], s, e - s)) {
+				lost = 0;
+				strcat(filename, "..");
+				strcat(filename, argv[1]);
+			}
+			s = e + 1;
+		} else {
+			if (!strncmp(argv[1], s, strlen(s))) {
+				lost = 0;
+				strcat(filename, "..");
+				strcat(filename, argv[1]);
+			}
+			break;
+		}
+	}
+
+	if (lost)
+		sprintf(filename, ".%s", argv[1]);
+
 	url_decode(filename);
 
 	if (!argv[1][1])
@@ -1016,4 +1085,10 @@ void ndc_set_flags(int fd, int flags) {
 
 void ndc_move(int fd, unsigned long long loc) {
 	descr_map[fd].loc = loc;
+}
+
+void ndc_auth(int fd, char *username) {
+	struct descr *d = &descr_map[fd];
+	d->flags |= DF_CONNECTED;
+	strcpy(d->username, username);
 }
