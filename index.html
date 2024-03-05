@@ -6,15 +6,14 @@
 		<meta name="viewport" content="width=device-width, user-scalable=no viewport-fit=cover">
 		<meta name="mobile-web-app-capable" content="yes">
 		<meta name="apple-mobile-web-app-capable" content="yes">
-		<link rel="stylesheet" href="%PUBLIC_URL%/ndc.css" />
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.1.0/css/xterm.css" />
-		<!-- DEPS -->
+		<link rel="stylesheet" href="%PUBLIC_URL%./ndc.css" />
 	</head>
 	<body class="margin-0 background-body">
 		<div class="size-vertical-view"><pre id="term" class="margin-0 size-vertical overflow" /></div>
 		<script async defer>window.onload = function () {
-			window.ndc.connect();
-			window.ndc.open(document.getElementById("term"));
+			window.ttyNdc.connect();
+			window.ttyNdc.open(document.getElementById("term"));
 		};</script>
 	</body>
 </html>

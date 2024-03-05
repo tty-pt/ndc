@@ -3,5 +3,7 @@
 /ndc
 /node_modules
 /htdocs
+/cjs
+/esm
 /.clangd
 /compile_commands.json

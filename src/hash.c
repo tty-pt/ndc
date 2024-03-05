@@ -102,7 +102,7 @@ hash_iter(int hd, hash_cb_t callback, void *arg) {
 			db->close(db, 0);
 			return;
 		} else {
-			callback(key.data, key.size, data.data, arg);
-			/* memset(&key, 0, sizeof(DBT)); */
+			callback(key.data, key.size, * (void **) data.data, arg);
+			memset(&data, 0, sizeof(DBT));
 		}
 }

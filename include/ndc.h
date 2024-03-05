@@ -44,7 +44,7 @@ enum cmd_flags {
 	CF_NOTRIM = 2,
 };
 
-long long ndc_tick;
+extern long long ndc_tick;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
 void ndc_move(int fd, unsigned long long loc);

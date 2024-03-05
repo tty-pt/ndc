@@ -70,6 +70,7 @@ static size_t cmds_len = 0;
 long long dt, tack = 0;
 SSL_CTX *ssl_ctx;
 char serve[BUFSIZ];
+long long ndc_tick;
 
 void
 ndc_close(int fd)
@@ -207,6 +208,7 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 
 	if (!*p || !isalnum(*p)) {
 		argv[0] = "";
+		*argc_r = argc;
 		return;
 	}
 
@@ -223,7 +225,6 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 		argv[i] = "";
 
 	argv[argc] = p + 2;
-	fprintf(stderr, "cmd_new %d %lu %d\n", fd, len, argc);
 
 	*argc_r = argc;
 }
@@ -307,8 +308,8 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	unsigned long long old = d->loc;
 	if ((!cmd_i && argc) || !(cmd_i->flags & CF_NOTRIM)) {
-		// i know this looks buggy
-		// but it probably isn't
+		// this looks buggy let's fix it, please
+		/* fprintf(stderr, "??? %d %p, %d '%s'\n", argc, cmd_i, cmd_i - cmds_hd, argv[0]); */
 		char *p = &argv[argc][-2];
 		if (*p == '\r') *p = '\0';
 		argv[argc] = "";
@@ -896,19 +897,19 @@ void do_GET_cb(char *buf, ssize_t len, int pid, int in, int out, void *arg) {
 	ndc_write(fd, buf, len);
 }
 
-void header_setenv(void *key, size_t key_size, void *data, void *arg) {
+void header_setenv(void *key, size_t key_size, void *data, size_t data_size, void *arg) {
 	int fd = * (int *) arg;
 	char buf[BUFSIZ];
+	int i = 0;
 	register char *b;
 	strcpy(buf, "HTTP_");
-	for (register char *s = (char *) key, *b = buf + 5; s < (char *) key + key_size; s++, b++)
+	for (register char *s = (char *) key, *b = buf + 5; *s && i < key_size; s++, b++, i++)
 		if (*s == '-')
 			*b = '_';
 		else
 			*b = toupper(*s);
 	*b = '\0';
 	setenv(buf, * (char **) data, 1);
-	fprintf(stderr, "header_setenv %s = %s ? %s\n", buf, * (char **) data, b);
 }
 
 void url_decode(char *str) {
