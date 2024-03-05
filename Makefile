@@ -1,4 +1,8 @@
+uname != uname
 PREFIX ?= /usr/local
+LIBDIR := $(DESTDIR)${PREFIX}/lib
+# LIBDIR := ${DESTDIR}/lib/x86_64-linux-gnu
+
 
 .PHONY:  all install uninstall clean
 .SUFFIXES: .so .c .o
@@ -32,7 +36,7 @@ ndc.o: ${interface}
 
 install: all
 	install -d ${DESTDIR}${PREFIX}/lib/pkgconfig
-	install -m 644 libndc.so $(DESTDIR)${PREFIX}/lib
+	install -m 644 libndc.so ${LIBDIR}
 	install -m 644 ndc $(DESTDIR)${PREFIX}/bin
 	install -m 644 ndc.pc $(DESTDIR)${PREFIX}/lib/pkgconfig
 	install -d ${DESTDIR}${PREFIX}/include

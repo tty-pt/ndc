@@ -70,6 +70,7 @@ static size_t cmds_len = 0;
 long long dt, tack = 0;
 SSL_CTX *ssl_ctx;
 char serve[BUFSIZ];
+long long ndc_tick;
 
 void
 ndc_close(int fd)
@@ -207,6 +208,7 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 
 	if (!*p || !isalnum(*p)) {
 		argv[0] = "";
+		*argc_r = argc;
 		return;
 	}
 
@@ -307,8 +309,8 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	unsigned long long old = d->loc;
 	if ((!cmd_i && argc) || !(cmd_i->flags & CF_NOTRIM)) {
-		// i know this looks buggy
-		// but it probably isn't
+		// this looks buggy let's fix it, please
+		/* fprintf(stderr, "??? %d %p, %d '%s'\n", argc, cmd_i, cmd_i - cmds_hd, argv[0]); */
 		char *p = &argv[argc][-2];
 		if (*p == '\r') *p = '\0';
 		argv[argc] = "";

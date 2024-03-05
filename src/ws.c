@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <err.h>
 #include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/select.h>
@@ -79,14 +80,20 @@ ws_init(int cfd, char *ws_key) {
 		"Sec-Websocket-Protocol: binary\r\n"
 		"Sec-Websocket-Accept: 00000000000000000000000000000\r\n\r\n",
 		kkey[] = "Sec-WebSocket-Key";
-	unsigned char hash[SHA_DIGEST_LENGTH];
+	unsigned char hash[EVP_MAX_MD_SIZE];
+	EVP_MD_CTX *mdctx;
+	unsigned int hash_len;
 	SHA_CTX c;
 
-	SHA1_Init(&c);
-	SHA1_Update(&c, ws_key, strlen(ws_key));
-	SHA1_Update(&c, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36);
-	SHA1_Final(hash, &c);
-	b64_ntop(hash, sizeof(hash), common_resp + 129, 29);
+	mdctx = EVP_MD_CTX_new();
+	EVP_DigestInit_ex(mdctx, EVP_sha1(), NULL);
+	EVP_DigestUpdate(mdctx, ws_key, strlen(ws_key));
+	EVP_DigestUpdate(mdctx, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36);
+
+	EVP_DigestFinal_ex(mdctx, hash, &hash_len);
+	EVP_MD_CTX_free(mdctx);
+
+	b64_ntop(hash, SHA_DIGEST_LENGTH, common_resp + 129, 29);
 	memcpy(common_resp + 129 + 28, "\r\n\r\n", 5);
 	ndc_low_write(cfd, common_resp, 129 + 28 + 4);
 	return 0;

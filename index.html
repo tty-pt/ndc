@@ -8,13 +8,13 @@
 		<meta name="apple-mobile-web-app-capable" content="yes">
 		<link rel="stylesheet" href="%PUBLIC_URL%/ndc.css" />
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.1.0/css/xterm.css" />
-		<!-- DEPS -->
 	</head>
 	<body class="margin-0 background-body">
 		<div class="size-vertical-view"><pre id="term" class="margin-0 size-vertical overflow" /></div>
+		<script defer src="%PUBLIC_URL%/ndc.js"></script>
 		<script async defer>window.onload = function () {
-			window.ndc.connect();
-			window.ndc.open(document.getElementById("term"));
+			window.ttyNdc.connect();
+			window.ttyNdc.open(document.getElementById("term"));
 		};</script>
 	</body>
 </html>
