@@ -23,6 +23,9 @@ function disconnect() {
       ws.removeEventListener('close', onClose);
 }
 
+let resolveConnect = null;
+const connected = new Promise(resolve => resolveConnect = resolve);
+
 export
 function connect(argProto = proto, argPort = window.location.port) {
   proto = argProto;
@@ -54,12 +57,10 @@ function resize(cols, rows) {
     IAC, SE
   ]);
 
-  ws?.send(nawsCommand);
+  connected.then(() => ws.send(nawsCommand));
 }
 
-window.onresize = () => {
-  fitAddon.fit();
-};
+const resizeObserver = new ResizeObserver(() => fitAddon.fit());
 
 export
 const term = new globalThis.Terminal({
@@ -100,6 +101,7 @@ function open(parent) {
   term.perm = "";
 
   term.onResize(({ cols, rows }) => resize(cols, rows));
+  resizeObserver.observe(parent);
 
   term.element.addEventListener("focusin", () => {
     term.focused = true;
@@ -166,6 +168,7 @@ function sendMessage(text) {
 }
 
 function onOpen() {
+  resolveConnect();
   fitAddon.fit();
 }
 
