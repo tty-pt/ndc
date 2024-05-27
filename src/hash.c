@@ -95,7 +95,7 @@ hash_iter(int hd, hash_cb_t callback, void *arg) {
 	memset(&data, 0, sizeof(DBT));
 	db->cursor(db, NULL, &cursor, 0);
 	while (1)
-		if (ret = cursor->get(cursor, &key, &data, DB_NEXT)) {
+		if ((ret = cursor->get(cursor, &key, &data, DB_NEXT))) {
 			if (ret != DB_NOTFOUND)
 				fprintf(stderr, "HASH_ITER: %s\n", db_strerror(ret));
 			cursor->close(cursor);

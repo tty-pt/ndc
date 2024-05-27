@@ -787,7 +787,7 @@ headers_get(size_t *body_start, char *next_lines)
 		case '\r':
 			*s = '\0';
 			if (s != key) {
-				hash_put(req_hd, key, strlen(key), value);
+				hash_put(req_hd, key, strlen(key) + 1, value);
 				key = s += 2;
 			} else
 				*++s = '\0';
@@ -897,19 +897,19 @@ void do_GET_cb(char *buf, ssize_t len, int pid, int in, int out, void *arg) {
 	ndc_write(fd, buf, len);
 }
 
-void header_setenv(void *key, size_t key_size, void *data, size_t data_size, void *arg) {
+void header_setenv(void *key, size_t key_size, void *data, void *arg) {
 	int fd = * (int *) arg;
 	char buf[BUFSIZ];
 	int i = 0;
-	register char *b;
+	register char *b, *s;
+	memset(buf, 0, BUFSIZ);
 	strcpy(buf, "HTTP_");
-	for (register char *s = (char *) key, *b = buf + 5; *s && i < key_size; s++, b++, i++)
+	for (s = (char *) key, b = buf + 5; *s && i < strlen(key); s++, b++, i++)
 		if (*s == '-')
 			*b = '_';
 		else
 			*b = toupper(*s);
-	*b = '\0';
-	setenv(buf, * (char **) data, 1);
+	setenv(buf, (char *) data, 1);
 }
 
 void url_decode(char *str) {
@@ -941,7 +941,7 @@ do_GET(int fd, int argc, char *argv[])
 	int req_hd = headers_get(&body_start, argv[argc]);
 	uid_t uid;
 	char *ws_key = SHASH_GET(req_hd, "Sec-WebSocket-Key");
-	fprintf(stderr, "do_GET %d %d %s %s\n", fd, argc, ws_key, argv[argc]);
+	/* fprintf(stderr, "do_GET %d %d %s %s\n", fd, argc, ws_key, argv[argc]); */
 
 	if (ws_key) {
 		if (ws_init(fd, ws_key))
@@ -975,7 +975,7 @@ do_GET(int fd, int argc, char *argv[])
 	static char * common = "HTTP/1.1 ", *content_type = "text/plain";
 	char *status = "200 OK";
 	struct stat stat_buf;
-	char filename[64];
+	char filename[64], *alt = "../.index";
 	char *body = argv[argc] + body_start + 1;
 	off_t total;
 	int want_fd = -1, lost = 1;
@@ -1004,21 +1004,39 @@ do_GET(int fd, int argc, char *argv[])
 
 	url_decode(filename);
 
-	if (!argv[1][1])
-		strcpy(filename, "./index.html");
+	/* fprintf(stderr, "GET %d %s %s %s\n", fd, argv[1], filename, alt); */
 
-	fprintf(stderr, "GET %d %s %s\n", fd, argv[1], filename);
-
-	if (stat(filename, &stat_buf)) {
-		status = "404 Not Found";
-		total = strlen(status);
-	} else if (access(filename, X_OK) == 0) {
-		char * const args[] = { filename, NULL };
-		hash_iter(req_hd, header_setenv, &fd);
-		setenv("QUERY_STRING", argv[1], 1);
-		setenv("SCRIPT_NAME", filename, 1);
-		ndc_command(args, do_GET_cb, &fd, body, strlen(body));
-		goto end;
+	if (!argv[1][1] || stat(filename, &stat_buf)) {
+		if (stat(alt, &stat_buf)) {
+			status = "404 Not Found";
+			total = strlen(status);
+		} else if (access(alt, X_OK) != 0) {
+			status = "403 Forbidden";
+			total = strlen(status);
+		} else {
+			char * args[2] = { NULL, NULL };
+			char uribuf[64];
+			char * uri;
+			char * query_string = strchr(argv[1], '?');
+			memcpy(uribuf, argv[1], sizeof(uribuf));
+			query_string = strchr(uribuf, '?');
+			if (query_string)
+				*query_string++ = '\0';
+			else
+				query_string = "";
+			args[0] = alt + 1;
+			hash_iter(req_hd, header_setenv, &fd);
+			setenv("DOCUMENT_URI", uribuf, 1);
+			setenv("QUERY_STRING", query_string, 1);
+			setenv("SCRIPT_NAME", alt, 1);
+			setenv("REQUEST_METHOD", "GET", 1);
+			chdir("..");
+			ndc_writef(fd, "HTTP/1.1 ");
+			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
+			close(want_fd);
+			ndc_close(fd);
+			return;
+		}
 	} else {
 		errno = 0;
 		char *ext = filename, *s;

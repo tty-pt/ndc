@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "ndc example project",
   "main": "cjs/ndc.js",
   "browser": "htdocs/ndc.js",
@@ -74,6 +74,7 @@
   "files": [
     "ndc.css",
     "htdocs",
+    ".index",
     "cjs",
     "esm",
     "src/*.c",
