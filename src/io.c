@@ -57,7 +57,7 @@ struct cmd {
 	char *argv[8];
 };
 
-ndc_cb_t do_GET, do_sh;
+ndc_cb_t do_GET, do_POST, do_sh;
 
 extern struct cmd_slot cmds[];
 
@@ -932,9 +932,8 @@ void url_decode(char *str) {
     *dst = '\0';
 }
 
-void
-do_GET(int fd, int argc, char *argv[])
-{
+void request_handle(int fd, int argc, char *argv[], int post) {
+	char *method = post ? "POST" : "GET";
 	struct passwd *pw;
 	struct descr *d = &descr_map[fd];
 	size_t body_start;
@@ -960,14 +959,14 @@ do_GET(int fd, int argc, char *argv[])
 
 	int flags = fcntl(fd, F_GETFL, 0);
 	if (flags == -1) {
-		warn("do_GET: fcntl F_GETFL\n");
+		warn("do_%s: fcntl F_GETFL\n", method);
 		goto end;
 	}
 
 	flags |= O_SYNC;
 
 	if (fcntl(fd, F_SETFL, flags) == -1) {
-		warn("do_GET: fcntl F_SETFL\n");
+		warn("do_%s: fcntl F_SETFL\n", method);
 		goto end;
 	}
 
@@ -1004,7 +1003,7 @@ do_GET(int fd, int argc, char *argv[])
 
 	url_decode(filename);
 
-	/* fprintf(stderr, "GET %d %s %s %s\n", fd, argv[1], filename, alt); */
+	fprintf(stderr, "%s %d %s %s %s %d\n", method, fd, argv[1], filename, alt, stat(filename, &stat_buf));
 
 	if (!argv[1][1] || stat(filename, &stat_buf)) {
 		if (stat(alt, &stat_buf)) {
@@ -1024,12 +1023,12 @@ do_GET(int fd, int argc, char *argv[])
 				*query_string++ = '\0';
 			else
 				query_string = "";
-			args[0] = alt + 1;
+			args[0] = alt + 2;
 			hash_iter(req_hd, header_setenv, &fd);
 			setenv("DOCUMENT_URI", uribuf, 1);
 			setenv("QUERY_STRING", query_string, 1);
 			setenv("SCRIPT_NAME", alt, 1);
-			setenv("REQUEST_METHOD", "GET", 1);
+			setenv("REQUEST_METHOD", method, 1);
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
 			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
@@ -1092,6 +1091,18 @@ end:
 	chdir("..");
 	close(want_fd);
 	ndc_close(fd);
+}
+
+void
+do_GET(int fd, int argc, char *argv[])
+{
+	request_handle(fd, argc, argv, 0);
+}
+
+void
+do_POST(int fd, int argc, char *argv[])
+{
+	request_handle(fd, argc, argv, 1);
 }
 
 int ndc_flags(int fd) {

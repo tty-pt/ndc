@@ -64,7 +64,7 @@ int ndc_dwritef(int fd, const char *fmt, va_list va);
 int ndc_writef(int fd, const char *fmt, ...);
 void ndc_wall(const char *msg);
 
-ndc_cb_t do_GET, do_sh;
+ndc_cb_t do_GET, do_POST, do_sh;
 
 void ndc_pty(int fd, char * const args[]);
 ssize_t ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len);
