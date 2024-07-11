@@ -138,7 +138,10 @@ function open(parent) {
         sendMessage(msg);
         term.perm = "";
       } else {
-        term.write("\n");
+        if (will_echo)
+          term.write("\b \b".repeat(term.inputBuf.length));
+        else
+          term.write("\n");
         ws.send(term.inputBuf + "\r\n");
         term.inputBuf = "";
       }

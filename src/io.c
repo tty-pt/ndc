@@ -647,8 +647,10 @@ void drop_priviledges(int fd) {
 
 
 	struct passwd *pw = getpwnam(d->username);
-	if (!pw)
+	if (!pw) {
+		fprintf(stderr, "NO PW INFORMATION\n");
 		exit(1);
+	}
 
 	uid_t new_uid = pw->pw_uid;
 	gid_t new_gid = pw->pw_gid;
@@ -787,7 +789,7 @@ headers_get(size_t *body_start, char *next_lines)
 		case '\r':
 			*s = '\0';
 			if (s != key) {
-				hash_put(req_hd, key, strlen(key) + 1, value);
+				hash_put(req_hd, key, strlen(key), value);
 				key = s += 2;
 			} else
 				*++s = '\0';
