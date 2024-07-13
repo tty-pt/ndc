@@ -101,6 +101,7 @@ ndc_close(int fd)
 
 static void cleanup()
 {
+	fprintf(stderr, "Cleanup!\n");
 	DESCR_ITER
 		ndc_close(di_i);
 
@@ -500,9 +501,7 @@ long long timestamp() {
 	return te.tv_sec * 1000LL + te.tv_usec / 1000;
 }
 
-int ndc_main(struct ndc_config *config_r) {
-	struct timeval timeout;
-
+int ndc_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
 	ndc_srv_flags = config.flags | NDC_WAKE;
 
@@ -539,6 +538,10 @@ int ndc_main(struct ndc_config *config_r) {
 		NULL,
 	};
 	shash_table(mime_hd, mime_table);
+}
+
+int ndc_main() {
+	struct timeval timeout;
 
 	atexit(cleanup);
 	signal(SIGTERM, sig_shutdown);
@@ -789,7 +792,7 @@ headers_get(size_t *body_start, char *next_lines)
 		case '\r':
 			*s = '\0';
 			if (s != key) {
-				hash_put(req_hd, key, strlen(key), value);
+				SHASH_PUT(req_hd, key, value);
 				key = s += 2;
 			} else
 				*++s = '\0';
@@ -906,7 +909,7 @@ void header_setenv(void *key, size_t key_size, void *data, void *arg) {
 	register char *b, *s;
 	memset(buf, 0, BUFSIZ);
 	strcpy(buf, "HTTP_");
-	for (s = (char *) key, b = buf + 5; *s && i < strlen(key); s++, b++, i++)
+	for (s = (char *) key, b = buf + 5; *s && i < key_size; s++, b++, i++)
 		if (*s == '-')
 			*b = '_';
 		else
