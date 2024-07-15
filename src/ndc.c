@@ -42,6 +42,10 @@ ndc_connect(int fd) {
 }
 
 void
+ndc_ws_init(int fd) {
+}
+
+void
 ndc_disconnect(int fd) {
 }
 

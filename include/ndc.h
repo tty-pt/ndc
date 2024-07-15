@@ -56,6 +56,7 @@ extern void ndc_update(void);
 extern void ndc_view(int fd, int argc, char *argv[]);
 extern void ndc_vim(int fd, int argc, char *argv[]);
 extern void ndc_connect(int fd);
+extern void ndc_ws_init(int fd);
 extern void ndc_disconnect(int fd);
 
 /* write to descriptor (might not need) */

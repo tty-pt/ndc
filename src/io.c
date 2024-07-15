@@ -954,6 +954,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			return;
 		d->flags |= DF_WEBSOCKET;
 		TELNET_CMD(IAC, DO, TELOPT_NAWS);
+		ndc_ws_init(fd);
 		if (config.auto_cmd)
 			cmd_parse(fd, config.auto_cmd, strlen(config.auto_cmd));
 		return;

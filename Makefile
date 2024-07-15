@@ -7,9 +7,12 @@ LIBDIR := $(DESTDIR)${PREFIX}/lib
 .PHONY:  all install uninstall clean
 .SUFFIXES: .so .c .o
 
+node_modules != realpath ..
+npm-lib := @tty-pt/qhash
+npm-lib := ${npm-lib:%=${node_modules}/%}
 RELDIR := .
-CFLAGS := -fPIC -Iinclude -I/usr/include -g
-LDFLAGS := -lc -lqhash -lcrypto -lrt -lssl -L/usr/lib
+CFLAGS := -fPIC ${npm-lib:%=-I%/include} -Iinclude -I/usr/include -g
+LDFLAGS := -lc -lqhash -lcrypto -lrt -lssl ${npm-lib:%=-L%} -L/usr/lib ${npm-lib:%=-Wl,-rpath,%}
 lib-LDFLAGS := ${LDFLAGS} -fPIC -shared
 exe-LDFLAGS := ${LDFLAGS} -L. -lndc
 LD := gcc
