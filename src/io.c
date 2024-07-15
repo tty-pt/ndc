@@ -26,7 +26,7 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
-#include "hash.h"
+#include "qhash.h"
 #include "ws.h"
 
 #define CMD_ARGM 8
@@ -489,7 +489,7 @@ static void
 cmds_init() {
 	int i;
 
-	cmds_hd = SHASH_INIT();
+	cmds_hd = hash_init();
 
 	for (i = 0; cmds[i].name; i++)
 		SHASH_PUT(cmds_hd, cmds[i].name, &cmds[i]);
@@ -529,7 +529,7 @@ int ndc_init(struct ndc_config *config_r) {
 	}
 
 	cmds_init();
-	mime_hd = SHASH_INIT();
+	mime_hd = hash_init();
 	static char *mime_table[] = {
 		"html\0text/html",
 		"txt\0text/plain",
@@ -781,7 +781,7 @@ do_sh(int fd, int argc, char *argv[])
 int
 headers_get(size_t *body_start, char *next_lines)
 {
-	int req_hd = SHASH_INIT();
+	int req_hd = hash_init();
 	register char *s, *key, *value;
 
 	for (s = next_lines, key = s, value = s; *s; ) switch (*s) {
@@ -854,8 +854,10 @@ ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size
 
 	int ready_fds;
 
-	if (input)
+	if (input) {
 		write(in, input, input_len);
+		close(in);
+	}
 
 	do {
 		ready_fds = select(out + 1, &read_fds, NULL, NULL, NULL);
@@ -1008,7 +1010,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 
 	url_decode(filename);
 
-	fprintf(stderr, "%s %d %s %s %s %d\n", method, fd, argv[1], filename, alt, stat(filename, &stat_buf));
+	fprintf(stderr, "%d %s %d %s %s %s %d\n", argc, method, fd, argv[1], filename, alt, stat(filename, &stat_buf));
 
 	if (!argv[1][1] || stat(filename, &stat_buf)) {
 		if (stat(alt, &stat_buf)) {
@@ -1030,6 +1032,10 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 				query_string = "";
 			args[0] = alt + 2;
 			hash_iter(req_hd, header_setenv, &fd);
+			char *req_content_type = SHASH_GET(req_hd, "Content-Type");
+			if (!req_content_type)
+				req_content_type = "text/plain";
+			setenv("CONTENT_TYPE", req_content_type, 1);
 			setenv("DOCUMENT_URI", uribuf, 1);
 			setenv("QUERY_STRING", query_string, 1);
 			setenv("SCRIPT_NAME", alt, 1);
@@ -1039,6 +1045,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
 			close(want_fd);
 			ndc_close(fd);
+			hash_close(req_hd);
 			return;
 		}
 	} else {
@@ -1096,6 +1103,7 @@ end:
 	chdir("..");
 	close(want_fd);
 	ndc_close(fd);
+	hash_close(req_hd);
 }
 
 void
