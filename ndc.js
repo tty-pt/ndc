@@ -1,6 +1,7 @@
 // import Terminal from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
+import "./ndc.css";
 
 let will_echo = true;
 let raw = false;

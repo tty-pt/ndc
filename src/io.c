@@ -20,6 +20,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -501,7 +502,7 @@ long long timestamp() {
 	return te.tv_sec * 1000LL + te.tv_usec / 1000;
 }
 
-int ndc_init(struct ndc_config *config_r) {
+void ndc_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
 	ndc_srv_flags = config.flags | NDC_WAKE;
 
@@ -510,7 +511,7 @@ int ndc_init(struct ndc_config *config_r) {
 		SSL_library_init();
 		OpenSSL_add_all_algorithms();
 		ssl_ctx = SSL_CTX_new(TLS_server_method());
-		SSL_CTX_set_ecdh_auto(sslctx, 1);
+		SSL_CTX_set_ecdh_auto(ssl_ctx, 1);
 		SSL_CTX_use_certificate_file(ssl_ctx, config.ssl_crt, SSL_FILETYPE_PEM);
 		SSL_CTX_use_PrivateKey_file(ssl_ctx, config.ssl_key, SSL_FILETYPE_PEM);
 		ERR_print_errors_fp(stderr);

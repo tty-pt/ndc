@@ -11,19 +11,21 @@ node_modules != realpath ..
 npm-lib := @tty-pt/qhash
 npm-lib := ${npm-lib:%=${node_modules}/%}
 RELDIR := .
-CFLAGS := -fPIC ${npm-lib:%=-I%/include} -Iinclude -I/usr/include -g
-LDFLAGS := -lc -lqhash -lcrypto -lrt -lssl ${npm-lib:%=-L%} -L/usr/lib ${npm-lib:%=-Wl,-rpath,%}
+CFLAGS := -fPIC ${npm-lib:%=-I%/include} -Iinclude -I/usr/include -I/usr/local/include
+uname != uname
+ldflags-Linux := -lrt
+LDFLAGS := -lc -lqhash -lcrypto ${ldflags-${uname}} -lssl ${npm-lib:%=-L%} -L/usr/lib -L/usr/local/lib ${npm-lib:%=-Wl,-rpath,%}
 lib-LDFLAGS := ${LDFLAGS} -fPIC -shared
-exe-LDFLAGS := ${LDFLAGS} -L. -lndc
-LD := gcc
+exe-LDFLAGS := -L. -lndc ${LDFLAGS}
+LD := ${CC}
 
 all: libndc.so ndc
 
 libndc.so: src/io.o src/ws.o
-	${LD} -o $@ $^ ${lib-LDFLAGS}
+	${LD} -o $@ src/io.o src/ws.o ${lib-LDFLAGS}
 
 ndc: src/ndc.o
-	${LD} -o $@ $^ ${exe-LDFLAGS}
+	${LD} -o $@ ${exe-LDFLAGS} src/ndc.o
 
 .c.o:
 	${COMPILE.c} -o ${@:%=${RELDIR}/%} ${<:%=${RELDIR}/%}

@@ -48,7 +48,7 @@ extern long long ndc_tick;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
 void ndc_move(int fd, unsigned long long loc);
-int ndc_init(struct ndc_config *);
+void ndc_init(struct ndc_config *);
 int ndc_main();
 
 /* define these */
