@@ -7,7 +7,7 @@ LIBDIR := $(DESTDIR)${PREFIX}/lib
 .PHONY:  all install uninstall clean
 .SUFFIXES: .so .c .o
 
-node_modules != realpath ..
+node_modules != realpath ../..
 npm-lib := @tty-pt/qhash
 npm-lib := ${npm-lib:%=${node_modules}/%}
 RELDIR := .
@@ -25,7 +25,7 @@ libndc.so: src/io.o src/ws.o
 	${LD} -o $@ src/io.o src/ws.o ${lib-LDFLAGS}
 
 ndc: src/ndc.o
-	${LD} -o $@ ${exe-LDFLAGS} src/ndc.o
+	${LD} src/ndc.o -o $@ ${exe-LDFLAGS}
 
 .c.o:
 	${COMPILE.c} -o ${@:%=${RELDIR}/%} ${<:%=${RELDIR}/%}
