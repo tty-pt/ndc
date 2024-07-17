@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "ndc example project",
   "main": "cjs/ndc.js",
   "browser": "htdocs/ndc.js",
@@ -50,7 +50,7 @@
     "@tty-pt/scripts": "^0.6.0-40"
   },
   "peerDependencies": {
-    "@tty-pt/qhash": "^0.0.3",
+    "@tty-pt/qhash": "^0.0.4",
     "xterm": "^5.1.0",
     "xterm-addon-fit": "^0.7.0",
     "xterm-addon-web-links": "^0.8.0"
