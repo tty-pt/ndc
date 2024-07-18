@@ -10,7 +10,7 @@ const fitAddon = new FitAddon();
 const decoder = new TextDecoder('utf-8');
 
 let ws = null;
-let proto = "ws";
+let proto = location.protocol === "https:" ? "wss" : "ws";
 let port = 4201;
 
 function onClose() {

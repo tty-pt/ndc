@@ -181,13 +181,17 @@ static void descr_new() {
 	if (ndc_srv_flags & NDC_SSL) {
 		d->cSSL = SSL_new(ssl_ctx);
 		SSL_set_fd(d->cSSL, fd);
+		int res = SSL_accept(d->cSSL);
 
-		if (SSL_accept(d->cSSL) <= 0) {
+		if (res <= 0) {
+			int ssl_err = SSL_get_error(d->cSSL, res);
 			ERR_print_errors_fp(stderr);
-			SSL_shutdown(d->cSSL);
-			SSL_free(d->cSSL);
-			close(fd);
-			err(1, "descr_new SSL_accept");
+			if (ssl_err != SSL_ERROR_SSL) {
+				SSL_shutdown(d->cSSL);
+				SSL_free(d->cSSL);
+				ndc_close(fd);
+				return;
+			}
 		}
 	}
 
@@ -517,17 +521,15 @@ void ndc_init(struct ndc_config *config_r) {
 		ERR_print_errors_fp(stderr);
 	}
 
-	if (ndc_srv_flags & NDC_ROOT && geteuid())
-		errx(1, "need root privileges");
-
-	if (config.chroot) {
+	if (!config.chroot)
+		fprintf(stderr, "Running from cwd\n");
+	else if (!geteuid()) {
 		if (chroot(config.chroot) != 0)
 			err(1, "ndc_main chroot");
-
-		/* if (config.chdir && chdir(config.chdir) != 0) */
 		if (chdir("/") != 0)
 			err(1, "ndc_main chdir");
-	}
+	} else if (chdir(config.chroot) != 0)
+		err(1, "ndc_main chdir2");
 
 	cmds_init();
 	mime_hd = hash_init();
@@ -568,7 +570,7 @@ int ndc_main() {
 	struct sockaddr_in server;
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = INADDR_ANY;
-	server.sin_port = htons(config.port ? config.port : 4201);
+	server.sin_port = htons(config.port ? config.port : (config.flags & NDC_SSL ? 443 : 80));
 
 	if (bind(srv_fd, (struct sockaddr *) &server, sizeof(server)))
 		err(4, "bind");
@@ -1032,7 +1034,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 				*query_string++ = '\0';
 			else
 				query_string = "";
-			args[0] = alt + 2;
+			args[0] = alt + 1;
 			hash_iter(req_hd, header_setenv, &fd);
 			char *req_content_type = SHASH_GET(req_hd, "Content-Type");
 			if (!req_content_type)
@@ -1042,6 +1044,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			setenv("QUERY_STRING", query_string, 1);
 			setenv("SCRIPT_NAME", alt, 1);
 			setenv("REQUEST_METHOD", method, 1);
+			setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
 			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
