@@ -67,7 +67,6 @@ main(int argc, char *argv[])
 {
 	struct ndc_config config = {
 		.flags = 0,
-		.auto_cmd = "sh",
 	};
 	register char c;
 
@@ -89,10 +88,6 @@ main(int argc, char *argv[])
 			
 		case 'C':
 			config.chroot = strdup(optarg);
-			break;
-
-		case 's':
-			config.serve = strdup(optarg);
 			break;
 
 		case 'r':

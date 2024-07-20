@@ -73,6 +73,7 @@ b64_ntop(u_char *src, size_t srclength, char *target, size_t target_size)
 
 int
 ws_init(int cfd, char *ws_key) {
+	fprintf(stderr, "ws_init %d %s\n", cfd, ws_key);
 	static char common_resp[]
 		= "HTTP/1.1 101 Switching Protocols\r\n"
 		"Upgrade: websocket\r\n"
@@ -190,7 +191,6 @@ ws_read(int cfd, char *data, size_t len)
         memcpy(data, frame.data, i + 1);
 	return pl;
 
-/* error:	ws_close(cfd); */
 error:
         return -1;
 }

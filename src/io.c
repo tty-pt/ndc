@@ -50,6 +50,7 @@ struct descr {
 	char username[BUFSIZ];
 	struct winsize wsz;
 	struct termios tty;
+	int headers;
 } descr_map[FD_SETSIZE];
 
 struct cmd {
@@ -70,8 +71,20 @@ static fd_set fds_read, fds_active, fds_write;
 static size_t cmds_len = 0;
 long long dt, tack = 0;
 SSL_CTX *ssl_ctx;
-char serve[BUFSIZ];
 long long ndc_tick;
+
+static void
+pty_close(int fd) {
+	struct descr *d = &descr_map[fd];
+	fprintf(stderr, "pty_close %d %d\n", fd, d->pty);
+
+	if (d->pid <= 0)
+		return;
+
+	close(d->pty);
+	waitpid(d->pid, NULL, 0);
+	d->pid = -1;
+}
 
 void
 ndc_close(int fd)
@@ -87,11 +100,21 @@ ndc_close(int fd)
 		kill(d->pid, SIGINT);
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
-	close(d->pty);
+	if (d->pty > 0) {
+		pty_close(fd);
+		close(d->pty);
+		FD_CLR(d->pty, &fds_active);
+		FD_CLR(d->pty, &fds_read);
+	}
+	if ((d->flags & DF_ACCEPTED) && ndc_srv_flags & NDC_SSL) {
+		SSL_shutdown(d->cSSL);
+		SSL_free(d->cSSL);
+		d->cSSL = NULL;
+	}
+	if (d->headers)
+		hash_close(d->headers);
 	shutdown(fd, 2);
 	close(fd);
-	FD_CLR(d->pty, &fds_active);
-	FD_CLR(d->pty, &fds_read);
 	FD_CLR(fd, &fds_active);
 	FD_CLR(fd, &fds_read);
 	d->fd = -1;
@@ -130,32 +153,28 @@ static void tty_init(int fd) {
 	ndc_tty_update(fd);
 }
 
-static void pty_open(int fd) {
+static int ssl_accept(int fd) {
+	fprintf(stderr, "ssl_accept %d\n", fd);
 	struct descr *d = &descr_map[fd];
+	int res = SSL_accept(d->cSSL);
 
-	fprintf(stderr, "pty_open %d %d\n", fd, d->pty);
+	d->flags &= ~DF_ACCEPTED;
 
-	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
-		err(1, "pty_open fcntl F_SETFL O_NONBLOCK");
+	if (res > 0) {
+		d->flags |= DF_ACCEPTED;
+		return 0;
+	}
 
-	d->pty = posix_openpt(O_RDWR | O_NOCTTY);
+	int ssl_err = SSL_get_error(d->cSSL, res);
+	fprintf(stderr, "ssl_accept error %d %d %d %d %s\n", fd, res, ssl_err, errno, ERR_error_string(ssl_err, NULL));
 
-	if (d->pty == -1)
-		err(1, "pty_open posix_openpt");
+	if (errno == EAGAIN && ssl_err == SSL_ERROR_WANT_READ)
+		return 0;
 
-	if (grantpt(d->pty) == -1)
-		err(1, "pty_open grantpt");
-
-	if (unlockpt(d->pty) == -1)
-		err(1, "pty_open unlockpt");
-
-	int flags = fcntl(d->pty, F_GETFL, 0);
-	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
-	tcsetattr(d->pty, TCSANOW, &d->tty);
-	ndc_tty_update(fd);
-	descr_map[d->pty].fd = fd;
-	descr_map[d->pty].pty = -1;
-	FD_SET(d->pty, &fds_active);
+	SSL_shutdown(d->cSSL);
+	SSL_free(d->cSSL);
+	ndc_close(fd);
+	return 1;
 }
 
 static void descr_new() {
@@ -176,28 +195,15 @@ static void descr_new() {
 	d = &descr_map[fd];
 	memset(d, 0, sizeof(struct descr));
 	d->fd = fd;
-	d->flags = DF_BINARY | DF_FIN;
+	d->flags = DF_BINARY | DF_FIN | DF_ACCEPTED;
 
+	errno = 0;
 	if (ndc_srv_flags & NDC_SSL) {
 		d->cSSL = SSL_new(ssl_ctx);
 		SSL_set_fd(d->cSSL, fd);
-		int res = SSL_accept(d->cSSL);
-
-		if (res <= 0) {
-			int ssl_err = SSL_get_error(d->cSSL, res);
-			ERR_print_errors_fp(stderr);
-			if (ssl_err != SSL_ERROR_SSL) {
-				SSL_shutdown(d->cSSL);
-				SSL_free(d->cSSL);
-				ndc_close(fd);
-				return;
-			}
-		}
+		if (ssl_accept(fd))
+			return;
 	}
-
-	pty_open(fd);
-	tty_init(fd);
-	ndc_connect(fd);
 }
 
 static void
@@ -238,9 +244,17 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 int
 ndc_low_write(int fd, void *from, size_t len)
 {
-	return ndc_srv_flags & NDC_SSL
-		? SSL_write(descr_map[fd].cSSL, from, len)
-		: write(fd, from, len);
+	if (ndc_srv_flags & NDC_SSL) {
+		int ret;
+		while ((ret = SSL_write(descr_map[fd].cSSL, from, len)) <= 0) {
+			int err = SSL_get_error(descr_map[fd].cSSL, ret);
+			if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+				continue;
+			break;
+		}
+		return ret;
+	} else
+		return write(fd, from, len);
 }
 
 int
@@ -262,6 +276,8 @@ ndc_read(int fd, void *data, size_t len)
 int
 ndc_write(int fd, void *data, size_t len)
 {
+	if (fd <= 0)
+		return -1;
 	struct descr *d = &descr_map[fd];
 	fprintf(stderr, "ndc_write %d %lu %d\n", fd, len, d->flags);
 	if (d->flags & DF_WERROR)
@@ -309,8 +325,11 @@ cmd_proc(int fd, int argc, char *argv[])
 	struct cmd_slot *cmd_i = hash_get(cmds_hd, argv[0], s - argv[0]);
 	struct descr *d = &descr_map[fd];
 
-	if (!(d->flags & DF_CONNECTED || (cmd_i && cmd_i->flags & CF_NOAUTH)))
-		return;
+	if (!(d->flags & DF_CONNECTED)) {
+		if (!cmd_i || !(cmd_i->flags & CF_NOAUTH))
+			return;
+		d->flags |= DF_CONNECTED;
+	}
 
 	unsigned long long old = d->loc;
 	if ((!cmd_i && argc) || !(cmd_i->flags & CF_NOTRIM)) {
@@ -344,21 +363,6 @@ ndc_tty_update(int fd)
 		TELNET_CMD(IAC, d->tty.c_lflag & ICANON ? WONT : WILL, TELOPT_SGA);
 }
 
-static void
-pty_close(int fd) {
-	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "pty_close %d %d\n", fd, d->pty);
-
-	if (d->pid <= 0)
-		return;
-
-	close(d->pty);
-	waitpid(d->pid, NULL, 0);
-	d->pid = -1;
-	pty_open(fd);
-	tty_init(fd);
-}
-
 int
 cmd_parse(int fd, char *cmd, size_t len) {
 	int argc;
@@ -379,11 +383,49 @@ cmd_parse(int fd, char *cmd, size_t len) {
 	return len;
 }
 
+static void pty_open(int fd) {
+	struct descr *d = &descr_map[fd];
+
+	fprintf(stderr, "pty_open %d %d\n", fd, d->pty);
+
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
+		err(1, "pty_open fcntl F_SETFL O_NONBLOCK");
+
+	d->pty = posix_openpt(O_RDWR | O_NOCTTY);
+
+	if (d->pty == -1)
+		err(1, "pty_open posix_openpt");
+
+	if (grantpt(d->pty) == -1)
+		err(1, "pty_open grantpt");
+
+	if (unlockpt(d->pty) == -1)
+		err(1, "pty_open unlockpt");
+
+	int flags = fcntl(d->pty, F_GETFL, 0);
+	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
+	tcsetattr(d->pty, TCSANOW, &d->tty);
+	ndc_tty_update(fd);
+	descr_map[d->pty].fd = fd;
+	descr_map[d->pty].pty = -1;
+	FD_SET(d->pty, &fds_active);
+	tty_init(fd);
+}
+
 int
 descr_read(int fd)
 {
 	struct descr *d = &descr_map[fd];
 	int ret;
+
+	fprintf(stderr, "descr_read %d\n", fd);
+
+	if (!(d->flags & DF_ACCEPTED)) {
+		if (ssl_accept(fd))
+			return 1;
+		if (!(d->flags & DF_ACCEPTED))
+			return 0;
+	}
 
 	ret = ndc_read(fd, d->cmd, sizeof(d->cmd));
 	switch (ret) {
@@ -391,8 +433,11 @@ descr_read(int fd)
 		if (errno == EAGAIN)
 			return 0;
 
-		warn("ws_read: failed - will close");
-	case 0: return -1;
+		warn("descr_read: failed - will close");
+		return -1;
+	case 0 :
+		return 0;
+	/* case 0: return -1; */
 	}
 
 	fprintf(stderr, "descr_read %d %d\n", d->fd, ret);
@@ -432,6 +477,7 @@ descr_read(int fd)
 	if (d->pid > 0) {
 		if (waitpid(d->pid, NULL, WNOHANG)) {
 			pty_close(fd);
+			pty_open(fd);
 			return 0;
 		} else if (i < ret) {
 			write(d->pty, d->cmd + i, ret);
@@ -443,16 +489,17 @@ descr_read(int fd)
 }
 
 static void
-pty_read(int i)
+pty_read(int fd)
 {
-	struct descr *d = &descr_map[i];
+	struct descr *d = &descr_map[fd];
 	char buf[BUFSIZ * 4];
 
 	if (!(FD_ISSET(d->pty, &fds_read) && d->pid > 0))
 		return;
 
 	if (waitpid(d->pid, NULL, WNOHANG)) {
-		pty_close(i);
+		pty_close(fd);
+		pty_open(fd);
 		return;
 	}
 
@@ -463,8 +510,10 @@ pty_read(int i)
 			if (errno == EAGAIN)
 				return;
 			if (errno == EIO) {
-				if (d->pid > 0)
-					pty_close(i);
+				if (d->pid > 0) {
+					pty_close(fd);
+					pty_open(fd);
+				}
 				return;
 			}
 		case 0: 
@@ -473,8 +522,8 @@ pty_read(int i)
 				 return;
 		default:
 			buf[ret] = '\0';
-			ndc_write(i, buf, ret);
-			ndc_tty_update(i);
+			ndc_write(fd, buf, ret);
+			ndc_tty_update(fd);
 	}
 }
 
@@ -591,7 +640,7 @@ int ndc_main() {
 		ndc_tick = timestamp();
 		dt = ndc_tick - last;
 
-		ndc_update();
+		ndc_update(dt);
 
 		if (!(ndc_srv_flags & NDC_WAKE))
 			break;
@@ -648,9 +697,8 @@ void drop_priviledges(int fd) {
 	if (!config.chroot)
 		return;
 	
-	if (!(d->flags & DF_CONNECTED))
+	if (!(d->flags & DF_AUTHENTICATED))
 		exit(1);
-
 
 	struct passwd *pw = getpwnam(d->username);
 	if (!pw) {
@@ -837,7 +885,7 @@ popen2(int *in, int *out, char * const args[])
 	return p;
 }
 
-ssize_t
+int
 ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len) {
 	static char buf[BUFSIZ];
 	ssize_t len = 0, total = 0;
@@ -846,10 +894,6 @@ ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size
 
 	pid = popen2(&in, &out, args); // should assert it equals 0
 	callback("", -1, pid, in, out, arg);
-
-	int flags = fcntl(out, F_GETFL);
-	flags |= O_NONBLOCK;
-	fcntl(out, F_SETFL, flags);
 
 	fd_set read_fds;
 	FD_ZERO(&read_fds);
@@ -896,8 +940,7 @@ ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size
 
 	close(in);
 	close(out);
-	kill(pid, 0);
-	return total;
+	return pid;
 }
 
 void do_GET_cb(char *buf, ssize_t len, int pid, int in, int out, void *arg) {
@@ -942,24 +985,27 @@ void url_decode(char *str) {
     *dst = '\0';
 }
 
+int ndc_headers(int fd) {
+	struct descr *d = &descr_map[fd];
+	return d->headers;
+}
+
 void request_handle(int fd, int argc, char *argv[], int post) {
 	char *method = post ? "POST" : "GET";
 	struct passwd *pw;
 	struct descr *d = &descr_map[fd];
 	size_t body_start;
-	int req_hd = headers_get(&body_start, argv[argc]);
+	d->headers = headers_get(&body_start, argv[argc]);
 	uid_t uid;
-	char *ws_key = SHASH_GET(req_hd, "Sec-WebSocket-Key");
-	/* fprintf(stderr, "do_GET %d %d %s %s\n", fd, argc, ws_key, argv[argc]); */
+	char *ws_key = SHASH_GET(d->headers, "Sec-WebSocket-Key");
 
 	if (ws_key) {
 		if (ws_init(fd, ws_key))
 			return;
 		d->flags |= DF_WEBSOCKET;
 		TELNET_CMD(IAC, DO, TELOPT_NAWS);
-		ndc_ws_init(fd);
-		if (config.auto_cmd)
-			cmd_parse(fd, config.auto_cmd, strlen(config.auto_cmd));
+		d->flags |= DF_CONNECTED;
+		ndc_connect(fd);
 		return;
 	} else if (argc < 2 || strstr(argv[1], "..")) {
 		ndc_close(fd);
@@ -987,34 +1033,14 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 	struct stat stat_buf;
 	char filename[64], *alt = "../.index";
 	char *body = argv[argc] + body_start + 1;
-	off_t total;
+	off_t total = 0;
 	int want_fd = -1, lost = 1;
 	*filename = '\0';
-
-	if (config.serve) for (char *s = config.serve, *e; *s;) {
-		if ((e = strchr(s, ':'))) {
-			if (!strncmp(argv[1], s, e - s)) {
-				lost = 0;
-				strcat(filename, "..");
-				strcat(filename, argv[1]);
-			}
-			s = e + 1;
-		} else {
-			if (!strncmp(argv[1], s, strlen(s))) {
-				lost = 0;
-				strcat(filename, "..");
-				strcat(filename, argv[1]);
-			}
-			break;
-		}
-	}
 
 	if (lost)
 		sprintf(filename, ".%s", argv[1]);
 
 	url_decode(filename);
-
-	fprintf(stderr, "%d %s %d %s %s %s %d\n", argc, method, fd, argv[1], filename, alt, stat(filename, &stat_buf));
 
 	if (!argv[1][1] || stat(filename, &stat_buf)) {
 		if (stat(alt, &stat_buf)) {
@@ -1035,8 +1061,8 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			else
 				query_string = "";
 			args[0] = alt + 1;
-			hash_iter(req_hd, header_setenv, &fd);
-			char *req_content_type = SHASH_GET(req_hd, "Content-Type");
+			hash_iter(d->headers, header_setenv, &fd);
+			char *req_content_type = SHASH_GET(d->headers, "Content-Type");
 			if (!req_content_type)
 				req_content_type = "text/plain";
 			setenv("CONTENT_TYPE", req_content_type, 1);
@@ -1047,10 +1073,9 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
+			/* waitpid(ndc_command(args, do_GET_cb, &fd, body, strlen(body)), NULL, 0); */
 			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
-			close(want_fd);
 			ndc_close(fd);
-			hash_close(req_hd);
 			return;
 		}
 	} else {
@@ -1068,10 +1093,9 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 		}
 
 		want_fd = open(filename, O_RDONLY);
-		total = lseek(want_fd, 0, SEEK_END);
+		fprintf(stderr, "STATIC %s %d %lld\n", filename, want_fd, stat_buf.st_size);
+		total = stat_buf.st_size;
 
-		if (total == -1)
-			goto end;
 	}
 
 	time_t now = time(NULL);
@@ -1079,13 +1103,10 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 	char date[100];
 	strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 
-	char *rest = "Connection: Closed\r\nContent-Type: text/html; charset=iso-8859-1\r\n";
-
 	ndc_writef(fd, "HTTP/1.1 %s\r\n"
 			"Date: %s\r\n"
 			"Server: ndc/0.0.1 (Unix)\r\n"
 			"Content-Length: %lu\r\n"
-			"Connection: Closed\r\n"
 			"Content-Type: %s\r\n"
 			"\r\n",
 			status, date, total, content_type);
@@ -1095,20 +1116,20 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 		ndc_write(fd, status, strlen(status));
 		goto end;
 	} else {
-		if (lseek(want_fd, 0, SEEK_SET) == -1)
-			goto end;
+		ssize_t len = 0, rem = total;
+		char body[total], *b = body;
 
-		ssize_t len = 0;
-		char body[BUFSIZ * 2];
+		while ((len = read(want_fd, b, rem)) > 0) {
+			rem -= len;
+			b += len;
+		}
 
-		while ((len = read(want_fd, body, sizeof(body))) > 0)
-			ndc_write(fd, body, len);
+		ndc_write(fd, body, total);
+		close(want_fd);
 	}
 end:
 	chdir("..");
-	close(want_fd);
 	ndc_close(fd);
-	hash_close(req_hd);
 }
 
 void
@@ -1137,6 +1158,8 @@ void ndc_move(int fd, unsigned long long loc) {
 
 void ndc_auth(int fd, char *username) {
 	struct descr *d = &descr_map[fd];
-	d->flags |= DF_CONNECTED;
+	fprintf(stderr, "ndc_auth %d %s\n", fd, username);
 	strcpy(d->username, username);
+	d->flags |= DF_AUTHENTICATED;
+	pty_open(fd);
 }

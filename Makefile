@@ -11,7 +11,7 @@ node_modules != realpath ../..
 npm-lib := @tty-pt/qhash
 npm-lib := ${npm-lib:%=${node_modules}/%}
 RELDIR := .
-CFLAGS := -fPIC ${npm-lib:%=-I%/include} -Iinclude -I/usr/include -I/usr/local/include
+CFLAGS := -g -fPIC ${npm-lib:%=-I%/include} -Iinclude -I/usr/include -I/usr/local/include
 uname != uname
 ldflags-Linux := -lrt
 LDFLAGS := -lc -lqhash -lcrypto ${ldflags-${uname}} -lssl ${npm-lib:%=-L%} -L/usr/lib -L/usr/local/lib ${npm-lib:%=-Wl,-rpath,%}
