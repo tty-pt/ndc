@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <err.h>
+#include <errno.h>
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <stdio.h>
@@ -13,13 +14,6 @@
 
 #define OPCODE(head) ((unsigned char) (head[0] & 0x0f))
 #define PAYLOAD_LEN(head) ((unsigned char) (head[1] & 0x7f))
-
-struct ws_frame {
-	char head[2];
-	uint64_t pl;
-	char mk[4];
-	char data[BUFSIZ];
-};
 
 #ifdef __OpenBSD__
 int __b64_ntop(unsigned char const *src, size_t srclength,
@@ -71,6 +65,13 @@ b64_ntop(u_char *src, size_t srclength, char *target, size_t target_size)
 
 #endif
 
+struct ws_frame {
+	char head[2];
+	uint64_t pl;
+	char mk[4];
+	char data[BUFSIZ];
+} frame_map[FD_SETSIZE];
+
 int
 ws_init(int cfd, char *ws_key) {
 	fprintf(stderr, "ws_init %d %s\n", cfd, ws_key);
@@ -97,6 +98,7 @@ ws_init(int cfd, char *ws_key) {
 	b64_ntop(hash, SHA_DIGEST_LENGTH, common_resp + 129, 29);
 	memcpy(common_resp + 129 + 28, "\r\n\r\n", 5);
 	ndc_low_write(cfd, common_resp, 129 + 28 + 4);
+	memset(&frame_map[cfd], 0, sizeof(struct ws_frame));
 	return 0;
 }
 
@@ -143,26 +145,35 @@ ws_close(int cfd) {
 int
 ws_read(int cfd, char *data, size_t len)
 {
-	struct ws_frame frame;
+	struct ws_frame *frame = &frame_map[cfd];
 	uint64_t pl;
 	int i, n;
 
-	n = ndc_low_read(cfd, frame.head, sizeof(frame.head));
-	if (n != sizeof(frame.head)) {
-		fprintf(stderr, "ws_read: bad frame head size\n");
+	if (frame->pl)
+		goto mk;
+
+	if (frame->head[0] && frame->head[1])
+		goto pl;
+
+	errno = 0;
+	n = ndc_low_read(cfd, frame->head, sizeof(frame->head));
+	if (n != sizeof(frame->head)) {
+		if (errno != EAGAIN)
+			fprintf(stderr, "ws_read %d: bad frame head size: %d %d\n", cfd, n, errno);
 		goto error;
 	}
 
-	if (OPCODE(frame.head) == 8)
+	if (OPCODE(frame->head) == 8)
 		return 0;
 
-	pl = PAYLOAD_LEN(frame.head);
+pl:	pl = PAYLOAD_LEN(frame->head);
 
 	if (pl == 126) {
 		uint16_t rpl;
 		n = ndc_low_read(cfd, &rpl, sizeof(rpl));
 		if (n != sizeof(rpl)) {
-			warn("ws_read: bad rpl size\n");
+			if (errno != EAGAIN)
+				warn("ws_read %d: bad rpl size\n", cfd);
 			goto error;
 		}
 		pl = rpl;
@@ -170,29 +181,30 @@ ws_read(int cfd, char *data, size_t len)
 		uint64_t rpl;
 		n = ndc_low_read(cfd, &rpl, sizeof(rpl));
 		if (n != sizeof(rpl)) {
-			warn("ws_read: bad rpl size 2\n");
+			if (errno != EAGAIN)
+				warn("ws_read %d: bad rpl size 2\n", cfd);
 			goto error;
 		}
 		pl = rpl;
 	}
 
-	frame.pl = pl;
+	frame->pl = pl;
 
-	n = ndc_low_read(cfd, frame.mk, sizeof(frame.mk) + pl);
-	if (n != sizeof(frame.mk) + pl) {
-		warn("ws_read: bad frame mk size\n");
+mk:	n = ndc_low_read(cfd, frame->mk, sizeof(frame->mk) + pl);
+	if (n != sizeof(frame->mk) + pl) {
+		warn("ws_read %d: bad frame mk size\n", cfd);
 		goto error;
 	}
 
 	for (i = 0; i < pl; i++)
-		frame.data[i] ^= frame.mk[i % 4];
+		frame->data[i] ^= frame->mk[i % 4];
 
-	frame.data[i] = '\0';
-        memcpy(data, frame.data, i + 1);
+	frame->data[i] = '\0';
+        memcpy(data, frame->data, i + 1);
+	memset(frame, 0, sizeof(struct ws_frame));
 	return pl;
 
-error:
-        return -1;
+error:	return -1;
 }
 
 int

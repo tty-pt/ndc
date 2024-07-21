@@ -76,7 +76,7 @@ long long ndc_tick;
 static void
 pty_close(int fd) {
 	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "pty_close %d %d\n", fd, d->pty);
+	/* fprintf(stderr, "pty_close %d %d\n", fd, d->pty); */
 
 	if (d->pid <= 0)
 		return;
@@ -269,7 +269,7 @@ int
 ndc_read(int fd, void *data, size_t len)
 {
 	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "ndc_read %d %lu\n", fd, len);
+	/* fprintf(stderr, "ndc_read %d %lu\n", fd, len); */
 	return d->flags & DF_WEBSOCKET ? ws_read(fd, data, len) : ndc_low_read(fd, data, len);
 }
 
@@ -279,7 +279,7 @@ ndc_write(int fd, void *data, size_t len)
 	if (fd <= 0)
 		return -1;
 	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "ndc_write %d %lu %d\n", fd, len, d->flags);
+	/* fprintf(stderr, "ndc_write %d %lu %d\n", fd, len, d->flags); */
 	if (d->flags & DF_WERROR)
 		return -1;
 	int ret = d->flags & DF_WEBSOCKET ? ws_write(fd, data, len, d->flags) : ndc_low_write(fd, data, len);
@@ -368,9 +368,12 @@ cmd_parse(int fd, char *cmd, size_t len) {
 	int argc;
 	char *argv[CMD_ARGM];
 
-	fprintf(stderr, "CMD_PARSE %d %lu %s\n", fd, len, cmd);
-
 	cmd_new(&argc, argv, fd, cmd, len);
+	/* fprintf(stderr, "CMD_PARSE %d %lu: '", fd, len); */
+	/* for (int i = 0; i < argc; i++) */
+	/* 	fprintf(stderr, "%s", argv[i]); */
+	/* fprintf(stderr, "'\n"); */
+
 
 	if (!argc)
 		return 0;
@@ -418,7 +421,7 @@ descr_read(int fd)
 	struct descr *d = &descr_map[fd];
 	int ret;
 
-	fprintf(stderr, "descr_read %d\n", fd);
+	/* fprintf(stderr, "descr_read %d\n", fd); */
 
 	if (!(d->flags & DF_ACCEPTED)) {
 		if (ssl_accept(fd))
