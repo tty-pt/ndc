@@ -154,7 +154,7 @@ static void tty_init(int fd) {
 }
 
 static int ssl_accept(int fd) {
-	fprintf(stderr, "ssl_accept %d\n", fd);
+	/* fprintf(stderr, "ssl_accept %d\n", fd); */
 	struct descr *d = &descr_map[fd];
 	int res = SSL_accept(d->cSSL);
 
@@ -166,10 +166,11 @@ static int ssl_accept(int fd) {
 	}
 
 	int ssl_err = SSL_get_error(d->cSSL, res);
-	fprintf(stderr, "ssl_accept error %d %d %d %d %s\n", fd, res, ssl_err, errno, ERR_error_string(ssl_err, NULL));
 
 	if (errno == EAGAIN && ssl_err == SSL_ERROR_WANT_READ)
 		return 0;
+
+	fprintf(stderr, "ssl_accept error %d %d %d %d %s\n", fd, res, ssl_err, errno, ERR_error_string(ssl_err, NULL));
 
 	SSL_shutdown(d->cSSL);
 	SSL_free(d->cSSL);
@@ -183,10 +184,8 @@ static void descr_new() {
 	int fd = accept(srv_fd, (struct sockaddr *) &addr, &addr_len);
 	struct descr *d;
 
-	if (fd <= 0) {
-		perror("descr_new");
+	if (fd <= 0)
 		return;
-	}
 
 	fprintf(stderr, "descr_new %d\n", fd);
 

@@ -23,7 +23,7 @@ struct cmd_slot cmds[] = {
 };
 
 void
-ndc_update()
+ndc_update(unsigned long long dt)
 {
 }
 
