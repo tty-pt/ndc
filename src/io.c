@@ -76,13 +76,15 @@ long long ndc_tick;
 static void
 pty_close(int fd) {
 	struct descr *d = &descr_map[fd];
-	/* fprintf(stderr, "pty_close %d %d\n", fd, d->pty); */
+	fprintf(stderr, "pty_close %d %d\n", fd, d->pty);
 
-	if (d->pid <= 0)
-		return;
+	/* if (d->pid <= 0) */
+	/* 	return; */
 
 	close(d->pty);
 	waitpid(d->pid, NULL, 0);
+	FD_CLR(d->pty, &fds_active);
+	FD_CLR(d->pty, &fds_read);
 	d->pid = -1;
 }
 
@@ -100,12 +102,8 @@ ndc_close(int fd)
 		kill(d->pid, SIGINT);
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
-	if (d->pty > 0) {
+	if (d->pty > 0)
 		pty_close(fd);
-		close(d->pty);
-		FD_CLR(d->pty, &fds_active);
-		FD_CLR(d->pty, &fds_read);
-	}
 	if ((d->flags & DF_ACCEPTED) && ndc_srv_flags & NDC_SSL) {
 		SSL_shutdown(d->cSSL);
 		SSL_free(d->cSSL);
@@ -437,9 +435,8 @@ descr_read(int fd)
 
 		warn("descr_read: failed - will close");
 		return -1;
-	case 0 :
-		return 0;
-	/* case 0: return -1; */
+	/* case 0: return 0; */
+	case 0: return -1;
 	}
 
 	fprintf(stderr, "descr_read %d %d\n", d->fd, ret);
@@ -478,8 +475,9 @@ descr_read(int fd)
 
 	if (d->pid > 0) {
 		if (waitpid(d->pid, NULL, WNOHANG)) {
-			pty_close(fd);
-			pty_open(fd);
+			fprintf(stderr, "descr_read waitpid\n");
+			/* pty_close(fd); */
+			/* pty_open(fd); */
 			return 0;
 		} else if (i < ret) {
 			write(d->pty, d->cmd + i, ret);
@@ -496,28 +494,26 @@ pty_read(int fd)
 	struct descr *d = &descr_map[fd];
 	char buf[BUFSIZ * 4];
 
+	memset(buf, 0, sizeof(buf));
+
 	if (!(FD_ISSET(d->pty, &fds_read) && d->pid > 0))
 		return;
 
 	if (waitpid(d->pid, NULL, WNOHANG)) {
-		pty_close(fd);
-		pty_open(fd);
+		fprintf(stderr, "pty_read %d STOP %d %d %s\n", fd, d->pid, errno, buf);
+		d->pid = -1;
+		/* pty_close(fd); */
+		/* pty_open(fd); */
 		return;
 	}
 
 	int ret = read(d->pty, buf, sizeof(buf));
+	fprintf(stderr, "pty_read %d READ %d %d %d %s\n", fd, d->pid, ret, errno, buf);
 
 	switch (ret) {
 		case -1:
-			if (errno == EAGAIN)
+			if (errno == EAGAIN || errno == EIO)
 				return;
-			if (errno == EIO) {
-				if (d->pid > 0) {
-					pty_close(fd);
-					pty_open(fd);
-				}
-				return;
-			}
 		case 0: 
 		case 1:
 			 if (d->tty.c_lflag & ICANON)
@@ -788,7 +784,7 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		dup2(slave_fd, STDIN_FILENO);
 		dup2(slave_fd, STDOUT_FILENO);
 		dup2(slave_fd, STDERR_FILENO);
-		close(d->pty);
+		/* close(d->pty); */
 
 		drop_priviledges(cfd);
 
@@ -875,6 +871,8 @@ popen2(int *in, int *out, char * const args[])
 		dup2(pipe_stdin[0], 0);
 		close(pipe_stdout[0]);
 		dup2(pipe_stdout[1], 1);
+		/* close(pipe_stderr[1]); */
+		/* dup2(pipe_stderr[1], 2); */
 		execvp(args[0], args);
 		perror("popen2: execvp");
 		exit(99);
@@ -942,6 +940,8 @@ ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size
 
 	close(in);
 	close(out);
+	kill(pid, 0);
+	/* return total; */
 	return pid;
 }
 

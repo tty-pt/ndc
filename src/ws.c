@@ -157,6 +157,8 @@ ws_read(int cfd, char *data, size_t len)
 
 	errno = 0;
 	n = ndc_low_read(cfd, frame->head, sizeof(frame->head));
+	if (n == 0)
+		return 0;
 	if (n != sizeof(frame->head)) {
 		if (errno != EAGAIN)
 			fprintf(stderr, "ws_read %d: bad frame head size: %d %d\n", cfd, n, errno);
