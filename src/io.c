@@ -44,7 +44,7 @@
 
 struct descr {
 	SSL *cSSL;
-	int fd, flags, pty, pid;
+	int fd, flags, pty, pid, lpid;
 	unsigned long long loc;
 	unsigned char cmd[BUFSIZ * 2];
 	char username[BUFSIZ];
@@ -57,6 +57,11 @@ struct cmd {
 	int fd;
 	int argc;
 	char *argv[8];
+};
+
+
+struct popen {
+	int in, out, pid;
 };
 
 ndc_cb_t do_GET, do_POST, do_sh;
@@ -77,13 +82,10 @@ int do_cleanup = 1;
 static void
 pty_close(int fd) {
 	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "pty_close %d %d\n", fd, d->pty);
-
-	/* if (d->pid <= 0) */
-	/* 	return; */
-
+	fprintf(stderr, "pty_close %d %d %d\n", fd, d->pty, d->pid);
+	if (d->lpid > 0)
+		kill(d->lpid, SIGINT);
 	close(d->pty);
-	waitpid(d->pid, NULL, 0);
 	FD_CLR(d->pty, &fds_active);
 	FD_CLR(d->pty, &fds_read);
 	d->pid = -1;
@@ -99,8 +101,6 @@ ndc_close(int fd)
 		ndc_disconnect(fd);
 
 	d->flags = 0;
-	if (d->pid > 0)
-		kill(d->pid, SIGINT);
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
 	if (d->pty > 0)
@@ -127,17 +127,18 @@ static void cleanup()
 	if (!do_cleanup)
 		return;
 
-	fprintf(stderr, "Cleanup!\n");
 	DESCR_ITER
 		ndc_close(di_i);
 
-	DESCR_ITER if (descr_map[di_i].pid > 0)
-		waitpid(descr_map[di_i].pid, NULL, 0);
+	DESCR_ITER {
+		struct descr *d = &descr_map[di_i];
+		kill(d->lpid, SIGINT);
+		waitpid(d->lpid, NULL, 0);
+	}
 }
 
 void sig_shutdown(int i)
 {
-
 	ndc_srv_flags &= ~NDC_WAKE;
 }
 
@@ -145,7 +146,7 @@ void ndc_tty_update(int fd);
 
 static void tty_init(int fd) {
 	struct descr *d = &descr_map[fd];
-	d->tty.c_lflag = ICANON | ECHO | ECHOK;
+	d->tty.c_lflag = ICANON | ECHO | ECHOK | ECHOCTL;
 	d->tty.c_iflag = IGNCR;
 	d->tty.c_iflag &= ~ICRNL;
 	d->tty.c_iflag &= ~INLCR;
@@ -362,6 +363,8 @@ ndc_tty_update(int fd)
 
 	if ((last.c_lflag & ICANON) != (d->tty.c_lflag & ICANON))
 		TELNET_CMD(IAC, d->tty.c_lflag & ICANON ? WONT : WILL, TELOPT_SGA);
+
+	tcflush(d->pty, TCIFLUSH);
 }
 
 int
@@ -390,12 +393,12 @@ cmd_parse(int fd, char *cmd, size_t len) {
 static void pty_open(int fd) {
 	struct descr *d = &descr_map[fd];
 
-	fprintf(stderr, "pty_open %d %d\n", fd, d->pty);
-
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
 		err(1, "pty_open fcntl F_SETFL O_NONBLOCK");
 
 	d->pty = posix_openpt(O_RDWR | O_NOCTTY);
+
+	fprintf(stderr, "pty_open %d %d\n", fd, d->pty);
 
 	if (d->pty == -1)
 		err(1, "pty_open posix_openpt");
@@ -409,7 +412,8 @@ static void pty_open(int fd) {
 	int flags = fcntl(d->pty, F_GETFL, 0);
 	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
 	tcsetattr(d->pty, TCSANOW, &d->tty);
-	ndc_tty_update(fd);
+	TELNET_CMD(IAC, WILL, TELOPT_ECHO);
+	TELNET_CMD(IAC, WONT, TELOPT_SGA);
 	descr_map[d->pty].fd = fd;
 	descr_map[d->pty].pty = -1;
 	FD_SET(d->pty, &fds_active);
@@ -443,7 +447,7 @@ descr_read(int fd)
 	case 0: return -1;
 	}
 
-	fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, d->cmd);
+	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, d->cmd); */
 
 	int i = 0, li = 0;
 
@@ -503,45 +507,29 @@ pty_read(int fd)
 		return;
 
 	errno = 0;
-	int was_child = 0;
 	if (waitpid(d->pid, NULL, WNOHANG)) {
-		fprintf(stderr, "pty_read %d %d STOP %d %d\n", fd, d->pty, d->pid, errno);
-		if (errno == EAGAIN)
-			return;
-		if (errno != ECHILD) {
+		/* fprintf(stderr, "pty_read %d %d STOP %d %d\n", fd, d->pty, d->pid, errno); */
+		if (errno != EAGAIN) {
+			d->pid = -1;
 			tty_init(fd);
-			pty_close(fd);
-			pty_open(fd);
-			return;
-		} else {
-			was_child = 1;
-			pty_close(fd);
 		}
+		return;
 	};
 
 	memset(buf, 0, sizeof(buf));
 	errno = 0;
 	int ret = read(d->pty, buf, sizeof(buf));
-	fprintf(stderr, "pty_read %d %d READ %d %d %d %d %s\n", fd, d->pty, d->pid, was_child, ret, errno, buf);
+	/* fprintf(stderr, "pty_read %d %d READ %d %d %d %s\n", fd, d->pty, d->pid, ret, errno, buf); */
 
 	switch (ret) {
 		case 0:
-			d->pid = -1;
-			if (was_child)
-				pty_open(fd);
-			return;
 		case -1:
 			if (errno == EAGAIN || errno == EIO)
 				return;
-			fprintf(stderr, "pty_read %d %d STOP2 %d %d %s\n", fd, d->pty, d->pid, errno, buf);
+			/* fprintf(stderr, "pty_read %d %d STOP2 %d %d %s\n", fd, d->pty, d->pid, errno, buf); */
 			d->pid = -1;
-			/* pty_close(fd); */
-			if (was_child)
-				pty_open(fd);
+			tty_init(fd);
 			return;
-		case 1:
-			 /* if (d->tty.c_lflag & ICANON) */
-				 /* return; */
 		default:
 			buf[ret] = '\0';
 			ndc_write(fd, buf, ret);
@@ -638,6 +626,9 @@ int ndc_main() {
 	if (fcntl(srv_fd, F_SETFL, O_NONBLOCK) == -1)
 		err(1, "srv_fd fcntl F_SETFL O_NONBLOCK");
 
+	if (fcntl(srv_fd, F_SETFD, FD_CLOEXEC) == -1)
+		err(1, "srv_fd fcntl F_SETFL FD_CLOEXEC");
+
 	struct sockaddr_in server;
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = INADDR_ANY;
@@ -691,35 +682,14 @@ int ndc_main() {
 			descr_proc();
 	}
 
-	/* cleanup(); */
-
 	return 0;
-}
-
-struct popen {
-	int in, out, pid;
-};
-
-struct {
-	struct termios tty;
-	int slave_fd;
-} clients[FD_SETSIZE];
-
-void cleanup_handler(int sig) {
-	for (int i = 0; i < FD_SETSIZE; ++i) if (clients[i].slave_fd != -1) {
-		tcsetattr(i, TCSANOW, &clients[i].tty);
-		close(clients[i].slave_fd);
-		clients[i].slave_fd = -1;
-	}
 }
 
 static struct passwd *drop_priviledges(int fd) {
 	struct descr *d = &descr_map[fd];
 
-	if (!(d->flags & DF_AUTHENTICATED)) {
-		fprintf(stderr, "NOT AUTHENTICATED\n");
-		exit(1);
-	}
+	if (!(d->flags & DF_AUTHENTICATED))
+		err(EXIT_FAILURE, "NOT AUTHENTICATED");
 
 	struct passwd *pw = getpwnam(d->username);
 
@@ -728,53 +698,35 @@ static struct passwd *drop_priviledges(int fd) {
 		return pw;
 	}
 	
-	if (!pw) {
-		fprintf(stderr, "NO PW INFORMATION\n");
-		exit(1);
-	}
+	if (!pw)
+		err(EXIT_FAILURE, "drop_priviledges getpwnam");
 
 	uid_t new_uid = pw->pw_uid;
 	gid_t new_gid = pw->pw_gid;
 
-	if (setgroups(0, NULL) != 0) {
-		perror("drop_priviledges failed to drop supplementary group IDs");
-		exit(1);
-	}
+	if (setgroups(0, NULL) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setgroups");
 
-	if (setgid(new_gid) != 0) {
-		perror("drop_priviledges failed to set GID");
-		exit(1);
-	}
+	if (setgid(new_gid) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setgid");
 
-	if (setuid(new_uid) != 0) {
-		perror("drop_priviledges failed to set UID");
-		exit(1);
-	}
+	if (setuid(new_uid) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setuid");
 
-	if (setenv("HOME", pw->pw_dir, 1) != 0) {
-		perror("drop_priviledges Failed to set HOME environment variable");
-		exit(1);
-	}
+	if (setenv("HOME", pw->pw_dir, 1) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setenv HOME");
 
-	if (setenv("USER", pw->pw_name, 1) != 0) {
-		perror("drop_priviledges Failed to set USER environment variable");
-		exit(1);
-	}
+	if (setenv("USER", pw->pw_name, 1) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setenv USER");
 
-	if (setenv("SHELL", pw->pw_shell, 1) != 0) {
-		perror("drop_priviledges Failed to set SHELL environment variable");
-		exit(1);
-	}
+	if (setenv("SHELL", pw->pw_shell, 1) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setenv SHELL");
 
-	if (setenv("PATH", "/bin:/usr/bin:/usr/local/bin", 1) != 0) {
-		perror("drop_priviledges Failed to set PATH environment variable");
-		exit(1);
-	}
+	if (setenv("PATH", "/bin:/usr/bin:/usr/local/bin", 1) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setenv PATH");
 
-	if (setenv("LD_LIBRARY_PATH", "/lib:/usr/lib:/usr/local/lib", 1) != 0) {
-		perror("drop_priviledges Failed to set LD_LIBRARY_PATH environment variable");
-		exit(1);
-	}
+	if (setenv("LD_LIBRARY_PATH", "/lib:/usr/lib:/usr/local/lib", 1) != 0)
+		err(EXIT_FAILURE, "drop_priviledges setenv LD_LIBRARY_PATH");
 
 	return pw;
 }
@@ -799,11 +751,10 @@ command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 			exit(EXIT_FAILURE);
 		}
 
-		if (!(d->flags & DF_AUTHENTICATED)) {
-			fprintf(stderr, "NOT AUTHENTICATED\n");
-			exit(EXIT_FAILURE);
-		}
-		ndc_tty_update(cfd);
+		if (!(d->flags & DF_AUTHENTICATED))
+			err(EXIT_FAILURE, "NOT AUTHENTICATED");
+
+		tty_init(cfd);
 
 		int slave_fd = open(ptsname(d->pty), O_RDWR);
 
@@ -814,37 +765,25 @@ command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 
 		fprintf(stderr, "open pty %s\n", ptsname(d->pty));
 
-		if (slave_fd == -1) {
-			perror("open slave pty");
-			exit(EXIT_FAILURE);
-		}
+		if (slave_fd == -1)
+			err(EXIT_FAILURE, "command_pty open");
 
-		if (ioctl(slave_fd, TIOCSWINSZ, ws) == -1) {
-			perror("ioctl TIOCSWINSZ");
-			exit(EXIT_FAILURE);
-		}
+		if (ioctl(slave_fd, TIOCSWINSZ, ws) == -1)
+			err(EXIT_FAILURE, "command_pty ioctl TIOCSWINSZ");
 
-		if (ioctl(slave_fd, TIOCSCTTY, NULL) == -1) {
-			perror("ioctl TIOCSCTTY");
-			exit(EXIT_FAILURE);
-		}
+		if (ioctl(slave_fd, TIOCSCTTY, NULL) == -1)
+			err(EXIT_FAILURE, "command_pty ioctl TIOCSCTTY");
 
-		struct termios tty;
-		tcgetattr(slave_fd, &tty); // Get current terminal attributes
-		clients[slave_fd].tty = tty;
-		clients[slave_fd].slave_fd = slave_fd;
+		if (fcntl(slave_fd, F_SETFD, FD_CLOEXEC) == -1)
+			err(EXIT_FAILURE, "command_pty fcntl srv_fd F_SETFL FD_CLOEXEC");
 
-		struct sigaction sa;
-		memset(&sa, 0, sizeof(sa));
-		sa.sa_handler = cleanup_handler;
-		sigaction(SIGTERM, &sa, NULL);
+		if (
+				-1 == dup2(slave_fd, STDIN_FILENO)
+				|| -1 == dup2(slave_fd, STDOUT_FILENO)
+				|| -1 == dup2(slave_fd, STDERR_FILENO))
 
-		if (-1 == dup2(slave_fd, STDIN_FILENO) || -1 == dup2(slave_fd, STDOUT_FILENO) || -1 == dup2(slave_fd, STDERR_FILENO)) {
-			perror("command_pty dup2");
-			exit(EXIT_FAILURE);
-		}
+			err(EXIT_FAILURE, "command_pty dup2");
 
-		tcsetattr(slave_fd, TCSANOW, &tty); // Set the attributes to make the changes take effect immediately
 		char *alt_args[] = { pw->pw_shell, NULL };
 
 		if (args[0])
@@ -871,7 +810,7 @@ void ndc_pty(int fd, char * const args[]) {
 	fprintf(stderr, "ndc_pty %s %d pty %d SGA %d ECHO %d\n",
 			args[0], fd, d->pty, WONT, WILL);
 
-	d->pid = command_pty(fd, &d->wsz, args, pipefd[1]);
+	d->lpid = d->pid = command_pty(fd, &d->wsz, args, pipefd[1]);
 
 	fprintf(stderr, "PTY master fd: %d\n", d->pty);
 }
