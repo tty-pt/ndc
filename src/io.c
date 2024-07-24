@@ -80,22 +80,22 @@ long long ndc_tick;
 int do_cleanup = 1;
 
 static void
-pty_close(int fd) {
+pty_close(int fd) { // does not fully close
 	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "pty_close %d %d %d\n", fd, d->pty, d->pid);
-	kill(d->pid, SIGKILL);
-	close(d->pty);
+	/* fprintf(stderr, "_pty_close %d %d %d\n", fd, d->pty, d->pid); */
+	if (d->pid > 0)
+		kill(d->pid, SIGKILL);
 	FD_CLR(d->pty, &fds_active);
 	FD_CLR(d->pty, &fds_read);
+	descr_map[d->pty].pty = -1;
 	d->pid = -1;
-	d->pty = -1;
 }
 
 void
 ndc_close(int fd)
 {
 	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "ndc_close %d\n", fd);
+	/* fprintf(stderr, "ndc_close %d\n", fd); */
 
 	if (d->flags & DF_CONNECTED)
 		ndc_disconnect(fd);
@@ -103,8 +103,11 @@ ndc_close(int fd)
 	d->flags = 0;
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
-	if (d->pty > 0)
+	if (d->pty > 0) {
 		pty_close(fd);
+		close(d->pty);
+		d->pty = -1;
+	}
 	if ((d->flags & DF_ACCEPTED) && ndc_srv_flags & NDC_SSL) {
 		SSL_shutdown(d->cSSL);
 		SSL_free(d->cSSL);
@@ -182,7 +185,7 @@ static void descr_new() {
 	if (fd <= 0)
 		return;
 
-	fprintf(stderr, "descr_new %d\n", fd);
+	/* fprintf(stderr, "descr_new %d\n", fd); */
 
 	FD_SET(fd, &fds_active);
 
@@ -386,20 +389,20 @@ static void pty_open(int fd) {
 	struct descr *d = &descr_map[fd];
 
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
-		err(1, "pty_open fcntl F_SETFL O_NONBLOCK");
+		err(EXIT_FAILURE, "pty_open fcntl F_SETFL O_NONBLOCK");
 
 	d->pty = posix_openpt(O_RDWR | O_NOCTTY);
 
-	fprintf(stderr, "pty_open %d %d\n", fd, d->pty);
+	/* fprintf(stderr, "pty_open %d %d\n", fd, d->pty); */
 
 	if (d->pty == -1)
-		err(1, "pty_open posix_openpt");
+		err(EXIT_FAILURE, "pty_open posix_openpt");
 
 	if (grantpt(d->pty) == -1)
-		err(1, "pty_open grantpt");
+		err(EXIT_FAILURE, "pty_open grantpt");
 
 	if (unlockpt(d->pty) == -1)
-		err(1, "pty_open unlockpt");
+		err(EXIT_FAILURE, "pty_open unlockpt");
 
 	int flags = fcntl(d->pty, F_GETFL, 0);
 	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
@@ -433,7 +436,7 @@ descr_read(int fd)
 		if (errno == EAGAIN)
 			return 0;
 
-		warn("descr_read: failed - will close");
+		fprintf(stderr, "descr_read: failed - will close");
 		return -1;
 	/* case 0: return 0; */
 	case 0: return -1;
@@ -475,9 +478,6 @@ descr_read(int fd)
 
 	if (d->pid > 0) {
 		if (waitpid(d->pid, NULL, WNOHANG)) {
-			fprintf(stderr, "descr_read waitpid\n");
-			/* pty_close(fd); */
-			/* pty_open(fd); */
 			return 0;
 		} else if (i < ret) {
 			write(d->pty, d->cmd + i, ret);
@@ -495,14 +495,11 @@ pty_read(int fd)
 	static char buf[BUFSIZ * 4];
 	char pbuf[1];
 
-	if (!(FD_ISSET(d->pty, &fds_read) && d->pid > 0))
-		return;
-
 	errno = 0;
 	if (waitpid(d->pid, NULL, WNOHANG)) {
 		/* fprintf(stderr, "pty_read %d %d STOP %d %d\n", fd, d->pty, d->pid, errno); */
 		if (errno != EAGAIN) {
-			d->pid = -1;
+			pty_close(fd);
 			tty_init(fd);
 		}
 		return;
@@ -514,12 +511,12 @@ pty_read(int fd)
 	/* fprintf(stderr, "pty_read %d %d READ %d %d %d %s\n", fd, d->pty, d->pid, ret, errno, buf); */
 
 	switch (ret) {
-		case 0:
+		case 0: return;
 		case -1:
 			if (errno == EAGAIN || errno == EIO)
 				return;
 			/* fprintf(stderr, "pty_read %d %d STOP2 %d %d %s\n", fd, d->pty, d->pid, errno, buf); */
-			d->pid = -1;
+			pty_close(fd);
 			tty_init(fd);
 			return;
 		default:
@@ -535,10 +532,10 @@ void descr_proc() {
 			;
 		else if (i == srv_fd)
 			descr_new();
+		else if (descr_map[i].pty == -2)
+			pty_read(descr_map[i].fd);
 		else if (descr_map[i].flags & DF_WERROR || descr_map[i].pty != -1 && descr_read(i) < 0)
 			ndc_close(i);
-		else
-			pty_read(descr_map[i].fd);
 }
 
 static void
@@ -576,11 +573,11 @@ void ndc_init(struct ndc_config *config_r) {
 		fprintf(stderr, "Running from cwd\n");
 	else if (!geteuid()) {
 		if (chroot(config.chroot) != 0)
-			err(1, "ndc_main chroot");
+			err(EXIT_FAILURE, "ndc_main chroot");
 		if (chdir("/") != 0)
-			err(1, "ndc_main chdir");
+			err(EXIT_FAILURE, "ndc_main chdir");
 	} else if (chdir(config.chroot) != 0)
-		err(1, "ndc_main chdir2");
+		err(EXIT_FAILURE, "ndc_main chdir2");
 
 	cmds_init();
 	mime_hd = hash_init();
@@ -592,34 +589,31 @@ void ndc_init(struct ndc_config *config_r) {
 		NULL,
 	};
 	shash_table(mime_hd, mime_table);
-}
-
-int ndc_main() {
-	struct timeval timeout;
 
 	atexit(cleanup);
 	signal(SIGTERM, sig_shutdown);
 	signal(SIGINT, sig_shutdown);
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGHUP, SIG_IGN);
 
 	srv_fd = socket(AF_INET, SOCK_STREAM, 0);
 
 	if (srv_fd < 0)
-		err(3, "socket");
+		err(EXIT_FAILURE, "socket");
 
 	int opt = 1;
 	if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0)
-		err(1, "srv_fd setsockopt SO_REUSEADDR");
+		err(EXIT_FAILURE, "srv_fd setsockopt SO_REUSEADDR");
 
 	opt = 1;
 	if (setsockopt(srv_fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt)) < 0)
-		err(1, "srv_fd setsockopt SO_KEEPALIVE");
+		err(EXIT_FAILURE, "srv_fd setsockopt SO_KEEPALIVE");
 
 	if (fcntl(srv_fd, F_SETFL, O_NONBLOCK) == -1)
-		err(1, "srv_fd fcntl F_SETFL O_NONBLOCK");
+		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL O_NONBLOCK");
 
 	if (fcntl(srv_fd, F_SETFD, FD_CLOEXEC) == -1)
-		err(1, "srv_fd fcntl F_SETFL FD_CLOEXEC");
+		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL FD_CLOEXEC");
 
 	struct sockaddr_in server;
 	server.sin_family = AF_INET;
@@ -627,7 +621,7 @@ int ndc_main() {
 	server.sin_port = htons(config.port ? config.port : (config.flags & NDC_SSL ? 443 : 80));
 
 	if (bind(srv_fd, (struct sockaddr *) &server, sizeof(server)))
-		err(4, "bind");
+		err(EXIT_FAILURE, "bind");
 
 	descr_map[0].fd = srv_fd;
 
@@ -636,7 +630,11 @@ int ndc_main() {
 	FD_SET(srv_fd, &fds_active);
 
 	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
-		return 0;
+		exit(EXIT_SUCCESS);
+}
+
+int ndc_main() {
+	struct timeval timeout;
 
 	ndc_tick = timestamp();
 
@@ -730,8 +728,9 @@ command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 	struct termios tty = d->tty;
 	pid_t p;
 
-	fprintf(stderr, "command_pty WILL EXEC %s\n", args[0]);
+	/* fprintf(stderr, "command_pty WILL EXEC %s\n", args[0]); */
 	FD_SET(d->pty, &fds_active);
+	descr_map[d->pty].pty = -2;
 
 	p = fork();
 	if(p == 0) { /* child */
@@ -755,7 +754,7 @@ command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 		if (pflags == -1 || fcntl(slave_fd, F_SETFL, pflags | FD_CLOEXEC) == -1)
 			exit(EXIT_FAILURE);
 
-		fprintf(stderr, "open pty %s\n", ptsname(d->pty));
+		/* fprintf(stderr, "open pty %s\n", ptsname(d->pty)); */
 
 		if (slave_fd == -1)
 			err(EXIT_FAILURE, "command_pty open");
@@ -777,16 +776,9 @@ command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 			err(EXIT_FAILURE, "command_pty dup2");
 
 		char *alt_args[] = { pw->pw_shell, NULL };
+		char * const *real_args = args[0] ? args : alt_args;
 
-		if (args[0])
-			execvp(args[0], args);
-		else {
-			int flags;
-			flags = fcntl(slave_fd, F_GETFL, 0);
-			fcntl(slave_fd, F_SETFL, flags | O_NONBLOCK);
-			execvp(alt_args[0], alt_args);
-		}
-
+		execvp(real_args[0], real_args);
 		perror("execvp");
 		exit(99);
 	}
@@ -799,12 +791,12 @@ void ndc_pty(int fd, char * const args[]) {
 	struct descr *d = &descr_map[fd];
 	int pipefd[2];
 
-	fprintf(stderr, "ndc_pty %s %d pty %d SGA %d ECHO %d\n",
-			args[0], fd, d->pty, WONT, WILL);
+	/* fprintf(stderr, "ndc_pty %s %d pty %d SGA %d ECHO %d\n", */
+	/* 		args[0], fd, d->pty, WONT, WILL); */
 
 	d->pid = command_pty(fd, &d->wsz, args, pipefd[1]);
 
-	fprintf(stderr, "PTY master fd: %d\n", d->pty);
+	/* fprintf(stderr, "PTY master fd: %d\n", d->pty); */
 }
 
 void
@@ -1006,14 +998,14 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 
 	int flags = fcntl(fd, F_GETFL, 0);
 	if (flags == -1) {
-		warn("do_%s: fcntl F_GETFL\n", method);
+		fprintf(stderr, "do_%s: fcntl F_GETFL\n", method);
 		goto end;
 	}
 
 	flags |= O_SYNC;
 
 	if (fcntl(fd, F_SETFL, flags) == -1) {
-		warn("do_%s: fcntl F_SETFL\n", method);
+		fprintf(stderr, "do_%s: fcntl F_SETFL\n", method);
 		goto end;
 	}
 
@@ -1087,7 +1079,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 		/* if (pflags == -1 || fcntl(want_fd, F_SETFL, pflags | FD_CLOEXEC) == -1) */
 		/* 	exit(EXIT_FAILURE); */
 
-		fprintf(stderr, "STATIC %s %d %lld\n", filename, want_fd, stat_buf.st_size);
+		/* fprintf(stderr, "STATIC %s %d %lld\n", filename, want_fd, stat_buf.st_size); */
 		total = stat_buf.st_size;
 
 	}
@@ -1152,7 +1144,7 @@ void ndc_move(int fd, unsigned long long loc) {
 
 void ndc_auth(int fd, char *username) {
 	struct descr *d = &descr_map[fd];
-	fprintf(stderr, "ndc_auth %d %s\n", fd, username);
+	/* fprintf(stderr, "ndc_auth %d %s\n", fd, username); */
 	strcpy(d->username, username);
 	d->flags |= DF_AUTHENTICATED;
 	pty_open(fd);
