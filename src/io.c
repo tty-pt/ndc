@@ -296,6 +296,8 @@ ndc_dwritef(int fd, const char *fmt, va_list args)
 int
 ndc_writef(int fd, const char *fmt, ...)
 {
+	if (fd <= 0)
+		return -1;
 	va_list va;
 	va_start(va, fmt);
 	int ret = ndc_dwritef(fd, fmt, va);
@@ -932,9 +934,8 @@ void do_GET_cb(char *buf, ssize_t len, int pid, int in, int out, void *arg) {
 	ndc_write(fd, buf, len);
 }
 
-void header_setenv(void *key, size_t key_size, void *data, void *arg) {
-	int fd = * (int *) arg;
-	char buf[BUFSIZ];
+char *env_name(void *key, size_t key_size) {
+	static char buf[BUFSIZ];
 	int i = 0;
 	register char *b, *s;
 	memset(buf, 0, BUFSIZ);
@@ -944,7 +945,17 @@ void header_setenv(void *key, size_t key_size, void *data, void *arg) {
 			*b = '_';
 		else
 			*b = toupper(*s);
-	setenv(buf, (char *) data, 1);
+	return buf;
+}
+
+void header_setenv(void *key, size_t key_size, void *data, void *arg) {
+	/* int fd = * (int *) arg; */
+	setenv(env_name(key, key_size), (char *) data, 1);
+}
+
+void header_unsetenv(void *key, size_t key_size, void *data, void *arg) {
+	/* int fd = * (int *) arg; */
+	unsetenv(env_name(key, key_size));
 }
 
 void url_decode(char *str) {
@@ -1056,6 +1067,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
 			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
+			hash_iter(d->headers, header_unsetenv, &fd);
 			ndc_close(fd);
 			return;
 		}
