@@ -50,7 +50,7 @@ struct descr {
 	char username[BUFSIZ];
 	struct winsize wsz;
 	struct termios tty;
-	int headers;
+	unsigned headers;
 } descr_map[FD_SETSIZE];
 
 struct cmd {
@@ -71,7 +71,7 @@ extern struct cmd_slot cmds[];
 struct ndc_config config;
 
 static int ndc_srv_flags = 0, srv_fd = -1;
-static int cmds_hd = -1, mime_hd = -1;
+static unsigned cmds_hd, mime_hd;
 static fd_set fds_read, fds_active, fds_write;
 static size_t cmds_len = 0;
 long long dt, tack = 0;
@@ -324,7 +324,7 @@ cmd_proc(int fd, int argc, char *argv[])
 	struct cmd_slot *cmd_i = hash_get(cmds_hd, argv[0], s - argv[0]);
 	struct descr *d = &descr_map[fd];
 
-	if (!(d->flags & DF_CONNECTED)) {
+	if (!(d->flags & DF_AUTHENTICATED)) {
 		if (!cmd_i || !(cmd_i->flags & CF_NOAUTH))
 			return;
 		d->flags |= DF_CONNECTED;
@@ -809,10 +809,10 @@ do_sh(int fd, int argc, char *argv[])
 	ndc_pty(fd, args);
 }
 
-int
+unsigned
 headers_get(size_t *body_start, char *next_lines)
 {
-	int req_hd = hash_init();
+	unsigned req_hd = hash_init();
 	register char *s, *key, *value;
 
 	for (s = next_lines, key = s, value = s; *s; ) switch (*s) {
@@ -948,16 +948,6 @@ char *env_name(void *key, size_t key_size) {
 	return buf;
 }
 
-void header_setenv(void *key, size_t key_size, void *data, void *arg) {
-	/* int fd = * (int *) arg; */
-	setenv(env_name(key, key_size), (char *) data, 1);
-}
-
-void header_unsetenv(void *key, size_t key_size, void *data, void *arg) {
-	/* int fd = * (int *) arg; */
-	unsetenv(env_name(key, key_size));
-}
-
 void url_decode(char *str) {
     char *src = str, *dst = str;
 
@@ -1047,6 +1037,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			char uribuf[64];
 			char * uri;
 			char * query_string = strchr(argv[1], '?');
+			struct hash_cursor c;
 			memcpy(uribuf, argv[1], sizeof(uribuf));
 			query_string = strchr(uribuf, '?');
 			if (query_string)
@@ -1054,7 +1045,9 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			else
 				query_string = "";
 			args[0] = alt + 1;
-			hash_iter(d->headers, header_setenv, &fd);
+			c = hash_iter_start(d->headers);
+			while (hash_iter_get(&c))
+				setenv(env_name(c.key, c.key_len), (char *) c.data, 1);
 			char *req_content_type = SHASH_GET(d->headers, "Content-Type");
 			if (!req_content_type)
 				req_content_type = "text/plain";
@@ -1067,7 +1060,9 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
 			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
-			hash_iter(d->headers, header_unsetenv, &fd);
+			c = hash_iter_start(d->headers);
+			while (hash_iter_get(&c))
+				unsetenv(env_name(c.key, c.key_len));
 			ndc_close(fd);
 			return;
 		}
