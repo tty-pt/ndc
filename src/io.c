@@ -245,7 +245,7 @@ ndc_low_write(int fd, void *from, size_t len)
 		int ret;
 		while ((ret = SSL_write(descr_map[fd].cSSL, from, len)) <= 0) {
 			int err = SSL_get_error(descr_map[fd].cSSL, ret);
-			if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+			if (err == SSL_ERROR_WANT_WRITE)
 				continue;
 			break;
 		}
