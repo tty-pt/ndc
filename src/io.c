@@ -553,7 +553,7 @@ cmds_init() {
 long long timestamp() {
 	struct timeval te;
 	gettimeofday(&te, NULL); // get current time
-	return te.tv_sec * 1000LL + te.tv_usec / 1000;
+	return te.tv_sec * 1000000LL + te.tv_usec;
 }
 
 void ndc_init(struct ndc_config *config_r) {
