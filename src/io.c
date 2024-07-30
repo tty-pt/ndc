@@ -51,6 +51,8 @@ struct descr {
 	struct winsize wsz;
 	struct termios tty;
 	unsigned headers;
+	void *remaining;
+	size_t remaining_len;
 } descr_map[FD_SETSIZE];
 
 struct cmd {
@@ -95,7 +97,12 @@ void
 ndc_close(int fd)
 {
 	struct descr *d = &descr_map[fd];
-	/* fprintf(stderr, "ndc_close %d\n", fd); */
+
+	if (d->remaining) {
+		free(d->remaining);
+		d->remaining = NULL;
+		d->remaining_len = 0;
+	}
 
 	if (d->flags & DF_CONNECTED)
 		ndc_disconnect(fd);
@@ -242,26 +249,49 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 }
 
 int
+ndc_write_remaining(int fd) {
+	struct descr *d = &descr_map[fd];
+
+	if (!d->remaining)
+		return 0;
+
+	int ret = SSL_write(d->cSSL, d->remaining, d->remaining_len);
+
+	if (ret < 0 && errno == EAGAIN)
+		return -1;
+
+	free(d->remaining);
+	d->remaining = NULL;
+	d->remaining_len = 0;
+	if (d->flags & DF_TO_CLOSE)
+		ndc_close(fd);
+	return ret;
+}
+
+int
 ndc_low_write(int fd, void *from, size_t len)
 {
 	if (ndc_srv_flags & NDC_SSL) {
-		int ret;
-		while ((ret = SSL_write(descr_map[fd].cSSL, from, len)) <= 0) {
-			int err = SSL_get_error(descr_map[fd].cSSL, ret);
-			if (err == SSL_ERROR_WANT_WRITE && descr_map[fd].flags & DF_ACCEPTED) {
-				fd_set writefds;
-				struct timeval tv;
-				FD_ZERO(&writefds);
-				FD_SET(fd, &writefds);
-				tv.tv_sec = 1;
-				tv.tv_usec = 0;
-				int sel_ret = select(fd + 1, NULL, &writefds, NULL, &tv);
-				if (sel_ret <= 0)
-					return -1;
-				continue;
-			}
-			break;
+		struct descr *d = &descr_map[fd];
+
+		if (d->remaining) {
+			size_t olen = d->remaining_len;
+			d->remaining_len += len;
+			d->remaining = realloc(d->remaining, d->remaining_len);
+			memcpy(d->remaining + olen, from, len);
+			return -1;
 		}
+
+		int ret = SSL_write(d->cSSL, from, len);
+		if (ret < 0) {
+			int err = SSL_get_error(d->cSSL, ret);
+			if (errno == EAGAIN) {
+				d->remaining = malloc(len);
+				memcpy(d->remaining, from, len);
+				d->remaining_len = len;
+			}
+		}
+
 		return ret;
 	} else
 		return write(fd, from, len);
@@ -290,11 +320,7 @@ ndc_write(int fd, void *data, size_t len)
 		return -1;
 	struct descr *d = &descr_map[fd];
 	/* fprintf(stderr, "ndc_write %d %lu %d\n", fd, len, d->flags); */
-	if (d->flags & DF_WERROR)
-		return -1;
 	int ret = d->flags & DF_WEBSOCKET ? ws_write(fd, data, len, d->flags) : ndc_low_write(fd, data, len);
-	if (ret == -1)
-		d->flags |= DF_WERROR;
 	return ret;
 }
 
@@ -543,13 +569,15 @@ pty_read(int fd)
 
 void descr_proc() {
 	for (register int i = 0; i < FD_SETSIZE; i++)
-		if (!FD_ISSET(i, &fds_read))
+		if (descr_map[i].remaining)
+			ndc_write_remaining(i);
+		else if (!FD_ISSET(i, &fds_read))
 			;
 		else if (i == srv_fd)
 			descr_new();
 		else if (descr_map[i].pty == -2)
 			pty_read(descr_map[i].fd);
-		else if (descr_map[i].flags & DF_WERROR || descr_map[i].pty != -1 && descr_read(i) < 0)
+		else if (descr_map[i].pty != -1 && descr_read(i) < 0)
 			ndc_close(i);
 }
 
@@ -883,7 +911,7 @@ popen2(int *in, int *out, char * const args[])
 
 int
 ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len) {
-	static char buf[BUFSIZ];
+	static char buf[BUFSIZ * 10];
 	ssize_t len = 0, total = 0;
 	int start = 1, cont = 0;
 	int in, out, pid;
@@ -1008,6 +1036,10 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 		return;
 	}
 
+	d->flags |= DF_TO_CLOSE;
+
+	/* fprintf(stderr, "%d %s %s\n", fd, method, argv[1]); */
+
 	chdir("./htdocs");
 
 	int flags = fcntl(fd, F_GETFL, 0);
@@ -1076,7 +1108,8 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			c = hash_iter_start(d->headers);
 			while (hash_iter_get(&c))
 				unsetenv(env_name(c.key, c.key_len));
-			ndc_close(fd);
+			if (!d->remaining)
+				ndc_close(fd);
 			return;
 		}
 	} else {
@@ -1135,7 +1168,8 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 	}
 end:
 	chdir("..");
-	ndc_close(fd);
+	if (!d->remaining)
+		ndc_close(fd);
 }
 
 void
