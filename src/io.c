@@ -56,7 +56,7 @@ struct descr {
 struct cmd {
 	int fd;
 	int argc;
-	char *argv[8];
+	char *argv[CMD_ARGM];
 };
 
 
@@ -224,11 +224,14 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 	argv[0] = p;
 	argc++;
 
-	for (p = input; *p && *p != '\r'; p++) if (isspace(*p)) {
+	for (p = input; *p && *p != '\r' && argc < CMD_ARGM; p++) if (isspace(*p)) {
 		*p = '\0';
 		argv[argc] = p + 1;
 		argc ++;
 	}
+
+	while (*p && *p != '\r')
+		p++;
 
 	for (int i = argc; i < CMD_ARGM; i++)
 		argv[i] = "";
@@ -245,7 +248,7 @@ ndc_low_write(int fd, void *from, size_t len)
 		int ret;
 		while ((ret = SSL_write(descr_map[fd].cSSL, from, len)) <= 0) {
 			int err = SSL_get_error(descr_map[fd].cSSL, ret);
-			if (err == SSL_ERROR_WANT_WRITE)
+			if (err == SSL_ERROR_WANT_WRITE && descr_map[fd].flags & DF_ACCEPTED)
 				continue;
 			break;
 		}
