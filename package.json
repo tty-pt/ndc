@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "ndc example project",
   "main": "cjs/ndc.js",
   "browser": "htdocs/ndc.js",

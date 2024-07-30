@@ -206,7 +206,7 @@ static void descr_new() {
 static void
 cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 {
-	static unsigned char buf[BUFSIZ * 2];
+	static unsigned char buf[BUFSIZ * 30];
 	struct cmd cmd;
 	register char *p = buf;
 	int argc = 0;
@@ -248,8 +248,18 @@ ndc_low_write(int fd, void *from, size_t len)
 		int ret;
 		while ((ret = SSL_write(descr_map[fd].cSSL, from, len)) <= 0) {
 			int err = SSL_get_error(descr_map[fd].cSSL, ret);
-			if (err == SSL_ERROR_WANT_WRITE && descr_map[fd].flags & DF_ACCEPTED)
+			if (err == SSL_ERROR_WANT_WRITE && descr_map[fd].flags & DF_ACCEPTED) {
+				fd_set writefds;
+				struct timeval tv;
+				FD_ZERO(&writefds);
+				FD_SET(fd, &writefds);
+				tv.tv_sec = 1;
+				tv.tv_usec = 0;
+				int sel_ret = select(fd + 1, NULL, &writefds, NULL, &tv);
+				if (sel_ret <= 0)
+					return -1;
 				continue;
+			}
 			break;
 		}
 		return ret;
