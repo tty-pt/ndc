@@ -1014,6 +1014,15 @@ int ndc_headers(int fd) {
 	return d->headers;
 }
 
+char *env_sane(char *str) {
+	static char buf[BUFSIZ];
+	char *b;
+	for (b = buf; isalnum(*str) || *str == '&' || *str == '_' || *str == '-' || *str == '='; str++, b++)
+		*b = *str;
+	*b = '\0';
+	return buf;
+}
+
 void request_handle(int fd, int argc, char *argv[], int post) {
 	char *method = post ? "POST" : "GET";
 	struct passwd *pw;
@@ -1096,9 +1105,9 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			char *req_content_type = SHASH_GET(d->headers, "Content-Type");
 			if (!req_content_type)
 				req_content_type = "text/plain";
-			setenv("CONTENT_TYPE", req_content_type, 1);
+			setenv("CONTENT_TYPE", env_sane(req_content_type), 1);
 			setenv("DOCUMENT_URI", uribuf, 1);
-			setenv("QUERY_STRING", query_string, 1);
+			setenv("QUERY_STRING", env_sane(query_string), 1);
 			setenv("SCRIPT_NAME", alt, 1);
 			setenv("REQUEST_METHOD", method, 1);
 			setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
