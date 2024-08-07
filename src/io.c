@@ -1017,7 +1017,9 @@ int ndc_headers(int fd) {
 char *env_sane(char *str) {
 	static char buf[BUFSIZ];
 	char *b;
-	for (b = buf; isalnum(*str) || *str == '&' || *str == '_' || *str == '-' || *str == '='; str++, b++)
+	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/'
+				|| *str == '&' || *str == '_' || *str == '-'
+				|| *str == '='); str++, b++)
 		*b = *str;
 	*b = '\0';
 	return buf;
