@@ -52,7 +52,7 @@ struct descr {
 	struct termios tty;
 	unsigned headers;
 	void *remaining;
-	size_t remaining_len;
+	size_t remaining_size, remaining_len;
 } descr_map[FD_SETSIZE];
 
 struct cmd {
@@ -101,7 +101,7 @@ ndc_close(int fd)
 	if (d->remaining) {
 		free(d->remaining);
 		d->remaining = NULL;
-		d->remaining_len = 0;
+		d->remaining_len = d->remaining_size = 0;
 	}
 
 	if (d->flags & DF_CONNECTED)
@@ -200,6 +200,8 @@ static void descr_new() {
 	memset(d, 0, sizeof(struct descr));
 	d->fd = fd;
 	d->flags = DF_BINARY | DF_FIN | DF_ACCEPTED;
+	d->remaining_size = BUFSIZ * 16;
+	d->remaining = malloc(d->remaining_size);
 
 	errno = 0;
 	if (ndc_srv_flags & NDC_SSL) {
@@ -252,7 +254,7 @@ int
 ndc_write_remaining(int fd) {
 	struct descr *d = &descr_map[fd];
 
-	if (!d->remaining)
+	if (!d->remaining_len)
 		return 0;
 
 	int ret = SSL_write(d->cSSL, d->remaining, d->remaining_len);
@@ -260,12 +262,23 @@ ndc_write_remaining(int fd) {
 	if (ret < 0 && errno == EAGAIN)
 		return -1;
 
-	free(d->remaining);
-	d->remaining = NULL;
 	d->remaining_len = 0;
 	if (d->flags & DF_TO_CLOSE)
 		ndc_close(fd);
 	return ret;
+}
+
+inline static void
+ndc_rem_may_inc(int fd, size_t len) {
+	struct descr *d = &descr_map[fd];
+	d->remaining_len += len;
+
+	if (d->remaining_len < d->remaining_size)
+		return;
+
+	d->remaining_size *= 2;
+	d->remaining_size += d->remaining_len;
+	d->remaining = realloc(d->remaining, d->remaining_size);
 }
 
 int
@@ -274,22 +287,20 @@ ndc_low_write(int fd, void *from, size_t len)
 	if (ndc_srv_flags & NDC_SSL) {
 		struct descr *d = &descr_map[fd];
 
-		if (d->remaining) {
+		if (d->remaining_len) {
 			size_t olen = d->remaining_len;
-			d->remaining_len += len;
-			d->remaining = realloc(d->remaining, d->remaining_len);
+			ndc_rem_may_inc(fd, len);
 			memcpy(d->remaining + olen, from, len);
+			ndc_write_remaining(fd);
 			return -1;
 		}
 
+		d->remaining_len = 0;
 		int ret = SSL_write(d->cSSL, from, len);
-		if (ret < 0) {
-			int err = SSL_get_error(d->cSSL, ret);
-			if (errno == EAGAIN) {
-				d->remaining = malloc(len);
-				memcpy(d->remaining, from, len);
-				d->remaining_len = len;
-			}
+
+		if (ret < 0 && errno == EAGAIN) {
+			ndc_rem_may_inc(fd, len);
+			memcpy(d->remaining, from, len);
 		}
 
 		return ret;
@@ -569,7 +580,7 @@ pty_read(int fd)
 
 void descr_proc() {
 	for (register int i = 0; i < FD_SETSIZE; i++)
-		if (descr_map[i].remaining)
+		if (descr_map[i].remaining_len)
 			ndc_write_remaining(i);
 		else if (!FD_ISSET(i, &fds_read))
 			;
@@ -1119,7 +1130,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			c = hash_iter_start(d->headers);
 			while (hash_iter_get(&c))
 				unsetenv(env_name(c.key, c.key_len));
-			if (!d->remaining)
+			if (!d->remaining_len)
 				ndc_close(fd);
 			return;
 		}
@@ -1138,12 +1149,6 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 		}
 
 		want_fd = open(filename, O_RDONLY);
-
-		/* int pflags = fcntl(want_fd, F_GETFL, 0); */
-		/* if (pflags == -1 || fcntl(want_fd, F_SETFL, pflags | FD_CLOEXEC) == -1) */
-		/* 	exit(EXIT_FAILURE); */
-
-		/* fprintf(stderr, "STATIC %s %d %lld\n", filename, want_fd, stat_buf.st_size); */
 		total = stat_buf.st_size;
 
 	}
@@ -1165,21 +1170,20 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 	if (want_fd <= 0) {
 		ndc_write(fd, status, strlen(status));
 		goto end;
-	} else {
-		ssize_t len = 0, rem = total;
-		char body[total], *b = body;
-
-		while ((len = read(want_fd, b, rem)) > 0) {
-			rem -= len;
-			b += len;
-		}
-
-		ndc_write(fd, body, total);
-		close(want_fd);
 	}
+
+	// static file
+	ssize_t len;
+	char b[BUFSIZ * 16];
+
+	while ((len = read(want_fd, b, sizeof(b))) > 0)
+		ndc_write(fd, b, len);
+
+	close(want_fd);
+
 end:
 	chdir("..");
-	if (!d->remaining)
+	if (!d->remaining_len)
 		ndc_close(fd);
 }
 
