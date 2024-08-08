@@ -72,7 +72,7 @@ extern struct cmd_slot cmds[];
 
 struct ndc_config config;
 
-static int ndc_srv_flags = 0, srv_fd = -1;
+static int ndc_srv_flags = 0, srv_ssl_fd = -1, srv_fd = -1;
 static unsigned cmds_hd, mime_hd;
 static fd_set fds_read, fds_active, fds_write;
 static size_t cmds_len = 0;
@@ -115,7 +115,7 @@ ndc_close(int fd)
 		close(d->pty);
 		d->pty = -1;
 	}
-	if ((d->flags & DF_ACCEPTED) && ndc_srv_flags & NDC_SSL) {
+	if ((d->flags & DF_ACCEPTED) && d->cSSL) {
 		SSL_shutdown(d->cSSL);
 		SSL_free(d->cSSL);
 		d->cSSL = NULL;
@@ -183,10 +183,10 @@ static int ssl_accept(int fd) {
 	return 1;
 }
 
-static void descr_new() {
+static void descr_new(int ssl) {
 	struct sockaddr_in addr;
 	socklen_t addr_len = (socklen_t)sizeof(addr);
-	int fd = accept(srv_fd, (struct sockaddr *) &addr, &addr_len);
+	int fd = accept(ssl ? srv_ssl_fd : srv_fd, (struct sockaddr *) &addr, &addr_len);
 	struct descr *d;
 
 	if (fd <= 0)
@@ -204,7 +204,7 @@ static void descr_new() {
 	d->remaining = malloc(d->remaining_size);
 
 	errno = 0;
-	if (ndc_srv_flags & NDC_SSL) {
+	if (ssl) {
 		d->cSSL = SSL_new(ssl_ctx);
 		SSL_set_fd(d->cSSL, fd);
 		if (ssl_accept(fd))
@@ -250,6 +250,16 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 	*argc_r = argc;
 }
 
+static int
+ndc_lower_write(int fd, void *from, size_t len)
+{
+	struct descr *d = &descr_map[fd];
+
+	return d->cSSL
+		? SSL_write(d->cSSL, from, len)
+		: write(fd, from, len);
+}
+
 int
 ndc_write_remaining(int fd) {
 	struct descr *d = &descr_map[fd];
@@ -257,7 +267,7 @@ ndc_write_remaining(int fd) {
 	if (!d->remaining_len)
 		return 0;
 
-	int ret = SSL_write(d->cSSL, d->remaining, d->remaining_len);
+	int ret = ndc_lower_write(fd, d->remaining, d->remaining_len);
 
 	if (ret < 0 && errno == EAGAIN)
 		return -1;
@@ -284,35 +294,34 @@ ndc_rem_may_inc(int fd, size_t len) {
 int
 ndc_low_write(int fd, void *from, size_t len)
 {
-	if (ndc_srv_flags & NDC_SSL) {
-		struct descr *d = &descr_map[fd];
+	struct descr *d = &descr_map[fd];
 
-		if (d->remaining_len) {
-			size_t olen = d->remaining_len;
-			ndc_rem_may_inc(fd, len);
-			memcpy(d->remaining + olen, from, len);
-			ndc_write_remaining(fd);
-			return -1;
-		}
+	if (d->remaining_len) {
+		size_t olen = d->remaining_len;
+		ndc_rem_may_inc(fd, len);
+		memcpy(d->remaining + olen, from, len);
+		ndc_write_remaining(fd);
+		return -1;
+	}
 
-		d->remaining_len = 0;
-		int ret = SSL_write(d->cSSL, from, len);
+	d->remaining_len = 0;
+	int ret = ndc_lower_write(fd, from, len);
 
-		if (ret < 0 && errno == EAGAIN) {
-			ndc_rem_may_inc(fd, len);
-			memcpy(d->remaining, from, len);
-		}
+	if (ret < 0 && errno == EAGAIN) {
+		ndc_rem_may_inc(fd, len);
+		memcpy(d->remaining, from, len);
+	}
 
-		return ret;
-	} else
-		return write(fd, from, len);
+	return ret;
 }
 
 int
 ndc_low_read(int fd, void *to, size_t len)
 {
-	return ndc_srv_flags & NDC_SSL
-		? SSL_read(descr_map[fd].cSSL, to, len)
+	struct descr *d = &descr_map[fd];
+
+	return d->cSSL
+		? SSL_read(d->cSSL, to, len)
 		: read(fd, to, len);
 }
 
@@ -425,7 +434,6 @@ cmd_parse(int fd, char *cmd, size_t len) {
 	/* 	fprintf(stderr, "%s", argv[i]); */
 	/* fprintf(stderr, "'\n"); */
 
-
 	if (!argc)
 		return 0;
 
@@ -473,10 +481,13 @@ descr_read(int fd)
 	struct descr *d = &descr_map[fd];
 	int ret;
 
+	if (d->fd != fd)
+		return 1;
+
 	/* fprintf(stderr, "descr_read %d\n", fd); */
 
 	if (!(d->flags & DF_ACCEPTED)) {
-		if (ssl_accept(fd))
+		if (d->cSSL && ssl_accept(fd))
 			return 1;
 		if (!(d->flags & DF_ACCEPTED))
 			return 0;
@@ -585,7 +596,9 @@ void descr_proc() {
 		else if (!FD_ISSET(i, &fds_read))
 			;
 		else if (i == srv_fd)
-			descr_new();
+			descr_new(0);
+		else if (i == srv_ssl_fd)
+			descr_new(1);
 		else if (descr_map[i].pty == -2)
 			pty_read(descr_map[i].fd);
 		else if (descr_map[i].pty != -1 && descr_read(i) < 0)
@@ -606,6 +619,46 @@ long long timestamp() {
 	struct timeval te;
 	gettimeofday(&te, NULL); // get current time
 	return te.tv_sec * 1000000LL + te.tv_usec;
+}
+
+static void
+ndc_bind(int *srv_fd_r, int ssl) {
+	int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (srv_fd < 0)
+		err(EXIT_FAILURE, "socket");
+
+	int opt = 1;
+	if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0)
+		err(EXIT_FAILURE, "srv_fd setsockopt SO_REUSEADDR");
+
+	opt = 1;
+	if (setsockopt(srv_fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt)) < 0)
+		err(EXIT_FAILURE, "srv_fd setsockopt SO_KEEPALIVE");
+
+	if (fcntl(srv_fd, F_SETFL, O_NONBLOCK) == -1)
+		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL O_NONBLOCK");
+
+	if (fcntl(srv_fd, F_SETFD, FD_CLOEXEC) == -1)
+		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL FD_CLOEXEC");
+
+	struct sockaddr_in server;
+	server.sin_family = AF_INET;
+	server.sin_addr.s_addr = INADDR_ANY;
+	server.sin_port = htons(ssl
+			? (config.ssl_port ? config.ssl_port : 443)
+			: (config.port ? config.port : 80));
+
+	if (bind(srv_fd, (struct sockaddr *) &server, sizeof(server)))
+		err(EXIT_FAILURE, "bind");
+
+	descr_map[srv_fd].fd = srv_fd;
+
+	listen(srv_fd, 32);
+
+	FD_SET(srv_fd, &fds_active);
+
+	*srv_fd_r = srv_fd;
 }
 
 void ndc_init(struct ndc_config *config_r) {
@@ -650,39 +703,11 @@ void ndc_init(struct ndc_config *config_r) {
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGHUP, SIG_IGN);
 
-	srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (config.flags & NDC_SSL)
+		ndc_bind(&srv_ssl_fd, 1);
 
-	if (srv_fd < 0)
-		err(EXIT_FAILURE, "socket");
-
-	int opt = 1;
-	if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0)
-		err(EXIT_FAILURE, "srv_fd setsockopt SO_REUSEADDR");
-
-	opt = 1;
-	if (setsockopt(srv_fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt)) < 0)
-		err(EXIT_FAILURE, "srv_fd setsockopt SO_KEEPALIVE");
-
-	if (fcntl(srv_fd, F_SETFL, O_NONBLOCK) == -1)
-		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL O_NONBLOCK");
-
-	if (fcntl(srv_fd, F_SETFD, FD_CLOEXEC) == -1)
-		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL FD_CLOEXEC");
-
-	struct sockaddr_in server;
-	server.sin_family = AF_INET;
-	server.sin_addr.s_addr = INADDR_ANY;
-	server.sin_port = htons(config.port ? config.port : (config.flags & NDC_SSL ? 443 : 80));
-
-	if (bind(srv_fd, (struct sockaddr *) &server, sizeof(server)))
-		err(EXIT_FAILURE, "bind");
-
-	descr_map[0].fd = srv_fd;
-
-	listen(srv_fd, 5);
-
-	FD_SET(srv_fd, &fds_active);
-
+	ndc_bind(&srv_fd, 0);
+	
 	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
 		exit(EXIT_SUCCESS);
 }
@@ -1059,6 +1084,21 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 	}
 
 	d->flags |= DF_TO_CLOSE;
+
+	if (config.flags & NDC_SSL && !d->cSSL) {
+		char *host = SHASH_GET(d->headers, "Host");
+		char response[1024];
+		snprintf(response, sizeof(response),
+				"HTTP/1.1 301 Moved Permanently\r\n"
+				"Location: https://%s/%s\r\n"
+				"Content-Length: 0\r\n"
+				"Connection: close\r\n"
+				"\r\n", host, argv[1]);
+		ndc_writef(fd, "%s", response);
+		if (!d->remaining_len)
+			ndc_close(fd);
+		return;
+	}
 
 	/* fprintf(stderr, "%d %s %s\n", fd, method, argv[1]); */
 

@@ -28,7 +28,7 @@ struct ndc_config {
 	     * ssl_crt, 
 	     * ssl_key;
 	
-	unsigned flags, port;
+	unsigned flags, port, ssl_port;
 };
 
 typedef void ndc_cb_t(int fd, int argc, char *argv[]);

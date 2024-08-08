@@ -70,7 +70,7 @@ main(int argc, char *argv[])
 	};
 	register char c;
 
-	while ((c = getopt(argc, argv, "?dvk:c:uC:srp:")) != -1) {
+	while ((c = getopt(argc, argv, "?dk:c:C:rp:s:")) != -1) {
 		switch (c) {
 		case 'd':
 			config.flags |= NDC_DETACH;
@@ -97,12 +97,17 @@ main(int argc, char *argv[])
 		case 'p':
 			config.port = atoi(optarg);
 			break;
-			
+
+		case 's':
+			config.ssl_port = atoi(optarg);
+			break;
+
 		default:
 			usage(*argv);
 			return 1;
 		}
 	}
 
-	return ndc_main(&config);
+	ndc_init(&config);
+	return ndc_main();
 }
