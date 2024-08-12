@@ -144,7 +144,7 @@ void sig_shutdown(int i)
 	ndc_srv_flags &= ~NDC_WAKE;
 }
 
-void ndc_tty_update(int fd);
+static void ndc_tty_update(int fd);
 
 static void tty_init(int fd) {
 	struct descr *d = &descr_map[fd];
@@ -260,7 +260,7 @@ ndc_lower_write(int fd, void *from, size_t len)
 		: write(fd, from, len);
 }
 
-int
+static int
 ndc_write_remaining(int fd) {
 	struct descr *d = &descr_map[fd];
 
@@ -325,7 +325,7 @@ ndc_low_read(int fd, void *to, size_t len)
 		: read(fd, to, len);
 }
 
-int
+static int
 ndc_read(int fd, void *data, size_t len)
 {
 	struct descr *d = &descr_map[fd];
@@ -370,7 +370,7 @@ ndc_wall(const char *msg)
 	DESCR_ITER NDC_TWRITE(di_i, (char *) msg);
 }
 
-void
+static void
 cmd_proc(int fd, int argc, char *argv[])
 {
 	if (argc < 1)
@@ -398,16 +398,17 @@ cmd_proc(int fd, int argc, char *argv[])
 		argv[argc] = "";
 	}
 
-	if (cmd_i)
+	if (cmd_i) {
+		/* ndc_command(fd, argc, argv); */
 		cmd_i->cb(fd, argc, argv);
-	else
+	} else
 		ndc_vim(fd, argc, argv);
 
 	if (old != d->loc)
 		ndc_view(fd, argc, argv);
 }
 
-void
+static void
 ndc_tty_update(int fd)
 {
 	struct descr *d = &descr_map[fd];
@@ -423,7 +424,7 @@ ndc_tty_update(int fd)
 	tcflush(d->pty, TCIFLUSH);
 }
 
-int
+static int
 cmd_parse(int fd, char *cmd, size_t len) {
 	int argc;
 	char *argv[CMD_ARGM];
@@ -475,7 +476,7 @@ static void pty_open(int fd) {
 	tty_init(fd);
 }
 
-int
+static int
 descr_read(int fd)
 {
 	struct descr *d = &descr_map[fd];
@@ -589,7 +590,7 @@ pty_read(int fd)
 	}
 }
 
-void descr_proc() {
+static inline void descr_proc() {
 	for (register int i = 0; i < FD_SETSIZE; i++)
 		if (descr_map[i].remaining_len)
 			ndc_write_remaining(i);
@@ -615,7 +616,7 @@ cmds_init() {
 		SHASH_PUT(cmds_hd, cmds[i].name, &cmds[i]);
 }
 
-long long timestamp() {
+static long long timestamp() {
 	struct timeval te;
 	gettimeofday(&te, NULL); // get current time
 	return te.tv_sec * 1000000LL + te.tv_usec;
@@ -800,7 +801,7 @@ static struct passwd *drop_priviledges(int fd) {
 	return pw;
 }
 
-int
+inline static int
 command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 {
 	struct descr *d = &descr_map[cfd];
@@ -886,7 +887,7 @@ do_sh(int fd, int argc, char *argv[])
 	ndc_pty(fd, args);
 }
 
-unsigned
+static inline unsigned
 headers_get(size_t *body_start, char *next_lines)
 {
 	unsigned req_hd = hash_init();
@@ -916,7 +917,7 @@ headers_get(size_t *body_start, char *next_lines)
 	return req_hd;
 }
 
-int
+static inline int
 popen2(int *in, int *out, char * const args[])
 {
 	pid_t p = -1;
@@ -945,12 +946,12 @@ popen2(int *in, int *out, char * const args[])
 	return p;
 }
 
-int
-ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len) {
+static inline int
+ndc_exec(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len) {
 	static char buf[BUFSIZ * 10];
 	ssize_t len = 0, total = 0;
 	int start = 1, cont = 0;
-	int in, out, pid;
+	int in, out, pid, ret = -1;
 
 	pid = popen2(&in, &out, args); // should assert it equals 0
 	callback("", -1, pid, in, out, arg);
@@ -974,7 +975,7 @@ ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size
 
 		if (ready_fds == -1) {
 			perror("Error in select");
-			return -1;
+			break;
 		}
 
 		if (!FD_ISSET(out, &read_fds))
@@ -988,19 +989,21 @@ ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size
 			total += len;
 		} else if (len == 0) {
 			callback("", 0, pid, in, out, arg);
+			ret = 0;
 			break;
 		} else switch (errno) {
 			case EAGAIN:
 				continue;
 			default:
 				perror("Error in read");
-				return -1;
+				goto out;
 		}
 	} while (1);
 
-	close(in);
+out:	close(in);
 	close(out);
 	kill(pid, SIGKILL);
+	waitpid(pid, NULL, 0);
 	return 0;
 }
 
@@ -1011,7 +1014,7 @@ void do_GET_cb(char *buf, ssize_t len, int pid, int in, int out, void *arg) {
 	ndc_write(fd, buf, len);
 }
 
-char *env_name(void *key, size_t key_size) {
+static char *env_name(void *key, size_t key_size) {
 	static char buf[BUFSIZ];
 	int i = 0;
 	register char *b, *s;
@@ -1025,7 +1028,7 @@ char *env_name(void *key, size_t key_size) {
 	return buf;
 }
 
-void url_decode(char *str) {
+static void url_decode(char *str) {
     char *src = str, *dst = str;
 
     while (*src) {
@@ -1050,7 +1053,7 @@ int ndc_headers(int fd) {
 	return d->headers;
 }
 
-char *env_sane(char *str) {
+static char *env_sane(char *str) {
 	static char buf[BUFSIZ];
 	char *b;
 	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/'
@@ -1061,7 +1064,7 @@ char *env_sane(char *str) {
 	return buf;
 }
 
-void request_handle(int fd, int argc, char *argv[], int post) {
+static void request_handle(int fd, int argc, char *argv[], int post) {
 	char *method = post ? "POST" : "GET";
 	struct passwd *pw;
 	struct descr *d = &descr_map[fd];
@@ -1166,7 +1169,7 @@ void request_handle(int fd, int argc, char *argv[], int post) {
 			setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
-			ndc_command(args, do_GET_cb, &fd, body, strlen(body));
+			ndc_exec(args, do_GET_cb, &fd, body, strlen(body));
 			c = hash_iter_start(d->headers);
 			while (hash_iter_get(&c))
 				unsetenv(env_name(c.key, c.key_len));

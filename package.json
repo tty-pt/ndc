@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.3.21",
+  "version": "0.3.22",
   "description": "ndc example project",
   "main": "cjs/ndc.js",
   "browser": "htdocs/ndc.js",
@@ -15,11 +15,6 @@
       "default": "./cjs/ndc.js"
     },
     "./ndc.css": "./htdocs/ndc.css"
-  },
-  "cdn": {
-    "xterm": true,
-    "xterm-addon-fit": true,
-    "xterm-addon-web-links": true
   },
   "external": {
     "xterm": "global Terminal",
@@ -47,7 +42,7 @@
   },
   "homepage": "",
   "devDependencies": {
-    "@tty-pt/scripts": "^0.6.4"
+    "@tty-pt/scripts": "^0.6.6"
   },
   "peerDependencies": {
     "@tty-pt/qhash": "^0.1.2",

@@ -58,6 +58,7 @@ extern void ndc_view(int fd, int argc, char *argv[]);
 extern void ndc_vim(int fd, int argc, char *argv[]);
 extern void ndc_connect(int fd);
 extern void ndc_disconnect(int fd);
+/* extern void ndc_command(int fd, int argc, char *argv[]); /1* will run on any command *1/ */
 
 /* write to descriptor (might not need) */
 int ndc_write(int fd, void *data, size_t len);
@@ -69,7 +70,7 @@ void ndc_wall(const char *msg);
 ndc_cb_t do_GET, do_POST, do_sh;
 
 void ndc_pty(int fd, char * const args[]);
-int ndc_command(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len);
+/* int ndc_exec(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len); */
 
 int ndc_flags(int fd);
 void ndc_close(int fd);

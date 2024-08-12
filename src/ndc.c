@@ -33,6 +33,11 @@ ndc_view(int fd, int argc, char *argv[])
 }
 
 void
+ndc_command(int fd, int argc, char *argv[])
+{
+}
+
+void
 ndc_vim(int fd, int argc, char *argv[])
 {
 }

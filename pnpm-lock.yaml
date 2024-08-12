@@ -22,8 +22,8 @@ importers:
         version: 0.8.0(xterm@5.3.0)
     devDependencies:
       '@tty-pt/scripts':
-        specifier: ^0.6.4
-        version: 0.6.4(@jest/globals@29.7.0)(@types/babel__core@7.20.5)(@types/jest@29.5.12)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(type-fest@2.19.0)
+        specifier: ^0.6.6
+        version: 0.6.6(@jest/globals@29.7.0)(@types/babel__core@7.20.5)(@types/jest@29.5.12)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(type-fest@2.19.0)
 
 packages:
 
@@ -1563,8 +1563,8 @@ packages:
   '@tty-pt/qhash@0.1.2':
     resolution: {integrity: sha512-twPSyQ5/PnHEBbXU/JtMG7KVRoMvjweshP9N883FDtt1l72DqitMzNVKgEu3NPpnNRBHSOtj4pJnrHp9kSNInQ==}
 
-  '@tty-pt/scripts@0.6.4':
-    resolution: {integrity: sha512-IYdZlQ0JabUiKf/ac8+u6477XMmg6pQM6ATN+c3kAp36zuRNGp/bEcXkA1TqFYJiBcmUgcu04+Mek7Hh0Y26pA==}
+  '@tty-pt/scripts@0.6.6':
+    resolution: {integrity: sha512-ugXFB9c2dSgSkAde3PBNqnGQhG0kjtgftr6THi9ZB7N9WwoKHShFZre9M2iPbaORPKZcEv4cIONCM9Dn4uJjxg==}
     hasBin: true
     peerDependencies:
       '@types/node': ^20.11.30
@@ -7357,7 +7357,7 @@ snapshots:
 
   '@tty-pt/qhash@0.1.2': {}
 
-  '@tty-pt/scripts@0.6.4(@jest/globals@29.7.0)(@types/babel__core@7.20.5)(@types/jest@29.5.12)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(type-fest@2.19.0)':
+  '@tty-pt/scripts@0.6.6(@jest/globals@29.7.0)(@types/babel__core@7.20.5)(@types/jest@29.5.12)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(type-fest@2.19.0)':
     dependencies:
       '@babel/core': 7.24.9
       '@babel/plugin-proposal-class-properties': 7.18.6(@babel/core@7.24.9)
