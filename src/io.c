@@ -81,18 +81,6 @@ SSL_CTX *ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
 
-static void
-pty_close(int fd) { // does not fully close
-	struct descr *d = &descr_map[fd];
-	/* fprintf(stderr, "_pty_close %d %d %d\n", fd, d->pty, d->pid); */
-	if (d->pid > 0)
-		kill(d->pid, SIGKILL);
-	FD_CLR(d->pty, &fds_active);
-	FD_CLR(d->pty, &fds_read);
-	descr_map[d->pty].pty = -1;
-	d->pid = -1;
-}
-
 void
 ndc_close(int fd)
 {
@@ -111,7 +99,12 @@ ndc_close(int fd)
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
 	if (d->pty > 0) {
-		pty_close(fd);
+		if (d->pid > 0)
+			kill(d->pid, SIGKILL);
+		d->pid = -1;
+		FD_CLR(d->pty, &fds_active);
+		FD_CLR(d->pty, &fds_read);
+		descr_map[d->pty].pty = -1;
 		close(d->pty);
 		d->pty = -1;
 	}
@@ -142,20 +135,6 @@ static void cleanup()
 void sig_shutdown(int i)
 {
 	ndc_srv_flags &= ~NDC_WAKE;
-}
-
-static void ndc_tty_update(int fd);
-
-static void tty_init(int fd) {
-	struct descr *d = &descr_map[fd];
-	d->tty.c_lflag = ICANON | ECHO | ECHOK | ECHOCTL;
-	d->tty.c_iflag = IGNCR;
-	d->tty.c_iflag &= ~ICRNL;
-	d->tty.c_iflag &= ~INLCR;
-	d->tty.c_oflag |= OPOST | ONLCR;
-	d->tty.c_oflag &= ~OCRNL;
-	tcsetattr(d->pty, TCSANOW, &d->tty);
-	ndc_tty_update(fd);
 }
 
 static int ssl_accept(int fd) {
@@ -467,13 +446,20 @@ static void pty_open(int fd) {
 
 	int flags = fcntl(d->pty, F_GETFL, 0);
 	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
-	tcsetattr(d->pty, TCSANOW, &d->tty);
 	TELNET_CMD(IAC, WILL, TELOPT_ECHO);
 	TELNET_CMD(IAC, WONT, TELOPT_SGA);
 	descr_map[d->pty].fd = fd;
 	descr_map[d->pty].pty = -1;
 	FD_SET(d->pty, &fds_active);
-	tty_init(fd);
+
+	d->tty.c_lflag = ICANON | ECHO | ECHOK | ECHOCTL;
+	d->tty.c_iflag = IGNCR;
+	d->tty.c_iflag &= ~ICRNL;
+	d->tty.c_iflag &= ~INLCR;
+	d->tty.c_oflag |= OPOST | ONLCR;
+	d->tty.c_oflag &= ~OCRNL;
+	tcsetattr(d->pty, TCSANOW, &d->tty);
+	ndc_tty_update(fd);
 }
 
 static int
@@ -561,33 +547,33 @@ pty_read(int fd)
 
 	errno = 0;
 	if (waitpid(d->pid, NULL, WNOHANG)) {
-		/* fprintf(stderr, "pty_read %d %d STOP %d %d\n", fd, d->pty, d->pid, errno); */
-		if (errno != EAGAIN) {
-			pty_close(fd);
-			tty_init(fd);
-		}
-		return;
+		if (errno == EAGAIN)
+			return;
+		goto close;
 	};
 
 	memset(buf, 0, sizeof(buf));
 	errno = 0;
 	int ret = read(d->pty, buf, sizeof(buf));
-	/* fprintf(stderr, "pty_read %d %d READ %d %d %d %s\n", fd, d->pty, d->pid, ret, errno, buf); */
 
 	switch (ret) {
 		case 0: return;
 		case -1:
 			if (errno == EAGAIN || errno == EIO)
 				return;
-			/* fprintf(stderr, "pty_read %d %d STOP2 %d %d %s\n", fd, d->pty, d->pid, errno, buf); */
-			pty_close(fd);
-			tty_init(fd);
-			return;
+			else
+				break;
 		default:
 			buf[ret] = '\0';
 			ndc_write(fd, buf, ret);
 			ndc_tty_update(fd);
+			return;
 	}
+
+close:	if (d->pid > 0)
+		kill(d->pid, SIGKILL);
+
+	d->pid = -1;
 }
 
 static inline void descr_proc() {
@@ -802,7 +788,7 @@ static struct passwd *drop_priviledges(int fd) {
 }
 
 inline static int
-command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
+command_pty(int cfd, struct winsize *ws, char * const args[])
 {
 	struct descr *d = &descr_map[cfd];
 	struct termios tty = d->tty;
@@ -824,8 +810,6 @@ command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 
 		if (!(d->flags & DF_AUTHENTICATED))
 			err(EXIT_FAILURE, "NOT AUTHENTICATED");
-
-		tty_init(cfd);
 
 		int slave_fd = open(ptsname(d->pty), O_RDWR);
 
@@ -869,12 +853,11 @@ command_pty(int cfd, struct winsize *ws, char * const args[], int pipe)
 
 void ndc_pty(int fd, char * const args[]) {
 	struct descr *d = &descr_map[fd];
-	int pipefd[2];
 
 	/* fprintf(stderr, "ndc_pty %s %d pty %d SGA %d ECHO %d\n", */
 	/* 		args[0], fd, d->pty, WONT, WILL); */
 
-	d->pid = command_pty(fd, &d->wsz, args, pipefd[1]);
+	d->pid = command_pty(fd, &d->wsz, args);
 
 	/* fprintf(stderr, "PTY master fd: %d\n", d->pty); */
 }
