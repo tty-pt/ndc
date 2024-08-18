@@ -119,6 +119,7 @@ ndc_close(int fd)
 	close(fd);
 	FD_CLR(fd, &fds_active);
 	FD_CLR(fd, &fds_read);
+	FD_CLR(fd, &fds_write);
 	d->fd = -1;
 	memset(d, 0, sizeof(struct descr));
 }
@@ -174,12 +175,13 @@ static void descr_new(int ssl) {
 	/* fprintf(stderr, "descr_new %d\n", fd); */
 
 	FD_SET(fd, &fds_active);
+	FD_SET(fd, &fds_write);
 
 	d = &descr_map[fd];
 	memset(d, 0, sizeof(struct descr));
 	d->fd = fd;
 	d->flags = DF_BINARY | DF_FIN | DF_ACCEPTED;
-	d->remaining_size = BUFSIZ * 16;
+	d->remaining_size = BUFSIZ * 32;
 	d->remaining = malloc(d->remaining_size);
 
 	errno = 0;
@@ -718,7 +720,7 @@ int ndc_main() {
 		timeout.tv_usec = 0;
 
 		fds_read = fds_active;
-		int select_n = select(FD_SETSIZE, &fds_read, NULL, NULL, &timeout);
+		int select_n = select(FD_SETSIZE, &fds_read, &fds_write, NULL, &timeout);
 
 		switch (select_n) {
 		case -1:
@@ -931,7 +933,7 @@ popen2(int *in, int *out, char * const args[])
 
 static inline int
 ndc_exec(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len) {
-	static char buf[BUFSIZ * 10];
+	static char buf[BUFSIZ * 64];
 	ssize_t len = 0, total = 0;
 	int start = 1, cont = 0;
 	int in, out, pid, ret = -1;
