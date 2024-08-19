@@ -886,6 +886,8 @@ headers_get(size_t *body_start, char *next_lines)
 		case '\r':
 			*s = '\0';
 			if (s != key) {
+				if (s - key >= BUFSIZ)
+					*(key + BUFSIZ - 1) = '\0';
 				SHASH_PUT(req_hd, key, value);
 				key = s += 2;
 			} else
@@ -1132,6 +1134,8 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			char uribuf[64];
 			char * uri;
 			char * query_string = strchr(argv[1], '?');
+			char key[BUFSIZ], *value;
+			size_t key_len;
 			struct hash_cursor c;
 			memcpy(uribuf, argv[1], sizeof(uribuf));
 			query_string = strchr(uribuf, '?');
@@ -1140,9 +1144,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			else
 				query_string = "";
 			args[0] = alt + 1;
-			c = hash_iter_start(d->headers);
-			while (hash_iter_get(&c))
-				setenv(env_name(c.key, c.key_len), (char *) c.data, 1);
+			c = hash_iter(d->headers);
+			while ((key_len = hash_next(key, &value, &c)))
+				setenv(env_name(key, key_len), value, 1);
 			char *req_content_type = SHASH_GET(d->headers, "Content-Type");
 			if (!req_content_type)
 				req_content_type = "text/plain";
@@ -1155,9 +1159,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
 			ndc_exec(args, do_GET_cb, &fd, body, strlen(body));
-			c = hash_iter_start(d->headers);
-			while (hash_iter_get(&c))
-				unsetenv(env_name(c.key, c.key_len));
+			c = hash_iter(d->headers);
+			while ((key_len = hash_next(key, &value, &c)))
+				unsetenv(env_name(key, key_len));
 			if (!d->remaining_len)
 				ndc_close(fd);
 			return;
