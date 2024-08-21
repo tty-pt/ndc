@@ -48,13 +48,11 @@ enum cmd_flags {
 extern long long ndc_tick;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
-void ndc_move(int fd, unsigned long long loc);
 void ndc_init(struct ndc_config *);
 int ndc_main();
 
 /* define these */
 extern void ndc_update(unsigned long long dt);
-extern void ndc_view(int fd, int argc, char *argv[]);
 extern void ndc_vim(int fd, int argc, char *argv[]);
 extern void ndc_connect(int fd);
 extern void ndc_disconnect(int fd);
@@ -75,7 +73,6 @@ void ndc_pty(int fd, char * const args[]);
 int ndc_flags(int fd);
 void ndc_close(int fd);
 void ndc_set_flags(int fd, int flags);
-void ndc_move(int fd, unsigned long long loc);
 void ndc_auth(int fd, char *username);
 int ndc_headers(int fd);
 

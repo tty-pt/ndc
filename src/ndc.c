@@ -28,11 +28,6 @@ ndc_update(unsigned long long dt)
 }
 
 void
-ndc_view(int fd, int argc, char *argv[])
-{
-}
-
-void
 ndc_command(int fd, int argc, char *argv[])
 {
 }

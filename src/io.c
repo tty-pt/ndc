@@ -45,7 +45,6 @@
 struct descr {
 	SSL *cSSL;
 	int fd, flags, pty, pid;
-	unsigned long long loc;
 	unsigned char cmd[BUFSIZ * 2];
 	char username[BUFSIZ];
 	struct winsize wsz;
@@ -370,7 +369,6 @@ cmd_proc(int fd, int argc, char *argv[])
 		d->flags |= DF_CONNECTED;
 	}
 
-	unsigned long long old = d->loc;
 	if ((!cmd_i && argc) || !(cmd_i->flags & CF_NOTRIM)) {
 		// this looks buggy let's fix it, please
 		/* fprintf(stderr, "??? %d %p, %d '%s'\n", argc, cmd_i, cmd_i - cmds_hd, argv[0]); */
@@ -384,9 +382,6 @@ cmd_proc(int fd, int argc, char *argv[])
 		cmd_i->cb(fd, argc, argv);
 	} else
 		ndc_vim(fd, argc, argv);
-
-	if (old != d->loc)
-		ndc_view(fd, argc, argv);
 }
 
 static void
@@ -1237,10 +1232,6 @@ int ndc_flags(int fd) {
 
 void ndc_set_flags(int fd, int flags) {
 	descr_map[fd].flags = flags;
-}
-
-void ndc_move(int fd, unsigned long long loc) {
-	descr_map[fd].loc = loc;
 }
 
 void ndc_auth(int fd, char *username) {
