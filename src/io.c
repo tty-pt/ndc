@@ -360,7 +360,7 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	for (s = argv[0]; isalnum(*s); s++);
 
-	struct cmd_slot *cmd_i = hash_get(cmds_hd, argv[0], s - argv[0]);
+	struct cmd_slot *cmd_i = hash_sget(cmds_hd, argv[0], s - argv[0]);
 	struct descr *d = &descr_map[fd];
 
 	if (!(d->flags & DF_AUTHENTICATED)) {
