@@ -73,7 +73,7 @@ struct ndc_config config;
 
 static int ndc_srv_flags = 0, srv_ssl_fd = -1, srv_fd = -1;
 static unsigned cmds_hd, mime_hd;
-static fd_set fds_read, fds_active, fds_write;
+static fd_set fds_read, fds_active;
 static size_t cmds_len = 0;
 long long dt, tack = 0;
 SSL_CTX *ssl_ctx;
@@ -118,7 +118,6 @@ ndc_close(int fd)
 	close(fd);
 	FD_CLR(fd, &fds_active);
 	FD_CLR(fd, &fds_read);
-	FD_CLR(fd, &fds_write);
 	d->fd = -1;
 	memset(d, 0, sizeof(struct descr));
 }
@@ -174,13 +173,12 @@ static void descr_new(int ssl) {
 	/* fprintf(stderr, "descr_new %d\n", fd); */
 
 	FD_SET(fd, &fds_active);
-	FD_SET(fd, &fds_write);
 
 	d = &descr_map[fd];
 	memset(d, 0, sizeof(struct descr));
 	d->fd = fd;
 	d->flags = DF_BINARY | DF_FIN | DF_ACCEPTED;
-	d->remaining_size = BUFSIZ * 32;
+	d->remaining_size = BUFSIZ * 64;
 	d->remaining = malloc(d->remaining_size);
 
 	errno = 0;
@@ -360,7 +358,12 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	for (s = argv[0]; isalnum(*s); s++);
 
-	struct cmd_slot *cmd_i = hash_sget(cmds_hd, argv[0], s - argv[0]);
+	int i;
+	struct cmd_slot *cmd_i = NULL;
+
+	if (hash_cget(cmds_hd, &i, argv[0], s - argv[0]) != -1)
+		cmd_i = &cmds[i];
+
 	struct descr *d = &descr_map[fd];
 
 	if (!(d->flags & DF_AUTHENTICATED)) {
@@ -596,7 +599,7 @@ cmds_init() {
 	cmds_hd = hash_init();
 
 	for (i = 0; cmds[i].name; i++)
-		SHASH_PUT(cmds_hd, cmds[i].name, &cmds[i]);
+		hash_cput(cmds_hd, cmds[i].name, strlen(cmds[i].name), &i, sizeof(i));
 }
 
 static long long timestamp() {
@@ -711,11 +714,15 @@ int ndc_main() {
 		if (!(ndc_srv_flags & NDC_WAKE))
 			break;
 
-		timeout.tv_sec = 1;
-		timeout.tv_usec = 0;
+		for (register int i = 0; i < FD_SETSIZE; i++)
+			if (descr_map[i].remaining_len)
+				ndc_write_remaining(i);
+
+		timeout.tv_sec = 0;
+		timeout.tv_usec = 100;
 
 		fds_read = fds_active;
-		int select_n = select(FD_SETSIZE, &fds_read, &fds_write, NULL, &timeout);
+		int select_n = select(FD_SETSIZE, &fds_read, NULL, NULL, &timeout);
 
 		switch (select_n) {
 		case -1:
@@ -883,7 +890,7 @@ headers_get(size_t *body_start, char *next_lines)
 			if (s != key) {
 				if (s - key >= BUFSIZ)
 					*(key + BUFSIZ - 1) = '\0';
-				SHASH_PUT(req_hd, key, value);
+				hash_sput(req_hd, key, value);
 				key = s += 2;
 			} else
 				*++s = '\0';
@@ -1053,7 +1060,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	size_t body_start;
 	d->headers = headers_get(&body_start, argv[argc]);
 	uid_t uid;
-	char *ws_key = SHASH_GET(d->headers, "Sec-WebSocket-Key");
+	char *ws_key = hash_sget(d->headers, "Sec-WebSocket-Key");
 
 	if (ws_key) {
 		if (ws_init(fd, ws_key))
@@ -1071,7 +1078,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	d->flags |= DF_TO_CLOSE;
 
 	if (config.flags & NDC_SSL && !d->cSSL) {
-		char *host = SHASH_GET(d->headers, "Host");
+		char *host = hash_sget(d->headers, "Host");
 		char response[1024];
 		snprintf(response, sizeof(response),
 				"HTTP/1.1 301 Moved Permanently\r\n"
@@ -1142,7 +1149,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			c = hash_iter(d->headers);
 			while ((key_len = hash_next(key, &value, &c)))
 				setenv(env_name(key, key_len), value, 1);
-			char *req_content_type = SHASH_GET(d->headers, "Content-Type");
+			char *req_content_type = hash_sget(d->headers, "Content-Type");
 			if (!req_content_type)
 				req_content_type = "text/plain";
 			setenv("CONTENT_TYPE", env_sane(req_content_type), 1);
@@ -1170,7 +1177,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 
 		content_type = "application/octet-stream";
 		if (ext) {
-			char *found = SHASH_GET(mime_hd, ext);
+			char *found = hash_sget(mime_hd, ext);
 			if (found)
 				content_type = found;
 		}
