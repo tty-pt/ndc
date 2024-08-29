@@ -361,7 +361,7 @@ cmd_proc(int fd, int argc, char *argv[])
 	int i;
 	struct cmd_slot *cmd_i = NULL;
 
-	if (hash_cget(cmds_hd, &i, argv[0], s - argv[0]) != -1)
+	if (hash_cget(cmds_hd, &i, argv[0], s - argv[0]) >= 0)
 		cmd_i = &cmds[i];
 
 	struct descr *d = &descr_map[fd];
@@ -1137,7 +1137,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			char * uri;
 			char * query_string = strchr(argv[1], '?');
 			char key[BUFSIZ], *value;
-			size_t key_len;
+			ssize_t key_len;
 			struct hash_cursor c;
 			memcpy(uribuf, argv[1], sizeof(uribuf));
 			query_string = strchr(uribuf, '?');
@@ -1147,7 +1147,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 				query_string = "";
 			args[0] = alt + 1;
 			c = hash_iter(d->headers);
-			while ((key_len = hash_next(key, &value, &c)))
+			while ((key_len = hash_next(key, &value, &c)) >= 0)
 				setenv(env_name(key, key_len), value, 1);
 			char *req_content_type = hash_sget(d->headers, "Content-Type");
 			if (!req_content_type)
@@ -1162,7 +1162,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			ndc_writef(fd, "HTTP/1.1 ");
 			ndc_exec(args, do_GET_cb, &fd, body, strlen(body));
 			c = hash_iter(d->headers);
-			while ((key_len = hash_next(key, &value, &c)))
+			while ((key_len = hash_next(key, &value, &c)) >= 0)
 				unsetenv(env_name(key, key_len));
 			if (!d->remaining_len)
 				ndc_close(fd);
