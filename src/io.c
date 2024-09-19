@@ -381,7 +381,7 @@ cmd_proc(int fd, int argc, char *argv[])
 	}
 
 	if (cmd_i) {
-		/* ndc_command(fd, argc, argv); */
+		ndc_command(fd, argc, argv);
 		cmd_i->cb(fd, argc, argv);
 	} else
 		ndc_vim(fd, argc, argv);

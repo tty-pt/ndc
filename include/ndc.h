@@ -56,7 +56,7 @@ extern void ndc_update(unsigned long long dt);
 extern void ndc_vim(int fd, int argc, char *argv[]);
 extern void ndc_connect(int fd);
 extern void ndc_disconnect(int fd);
-/* extern void ndc_command(int fd, int argc, char *argv[]); /1* will run on any command *1/ */
+extern void ndc_command(int fd, int argc, char *argv[]); /* will run on any command */
 
 /* write to descriptor (might not need) */
 int ndc_write(int fd, void *data, size_t len);
