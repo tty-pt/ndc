@@ -1047,7 +1047,7 @@ static char *env_sane(char *str) {
 	char *b;
 	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/'
 				|| *str == '&' || *str == '_' || *str == '-'
-				|| *str == '='); str++, b++)
+				|| *str == ' ' || *str == '=' || *str == ';'); str++, b++)
 		*b = *str;
 	*b = '\0';
 	return buf;
