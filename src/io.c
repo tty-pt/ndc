@@ -2,7 +2,7 @@
 #define _BSD_SOURCE
 #define _XOPEN_SOURCE 600
 
-#include "ndc.h"
+#include "../include/ndc.h"
 #include <arpa/telnet.h>
 #include <ctype.h>
 #include <err.h>
@@ -27,8 +27,8 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
-#include "qhash.h"
-#include "ws.h"
+#include <qhash.h>
+#include "../include/ws.h"
 
 #define CMD_ARGM 8
 
@@ -358,10 +358,11 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	for (s = argv[0]; isalnum(*s); s++);
 
-	int i;
+	unsigned i;
 	struct cmd_slot *cmd_i = NULL;
 
-	if (hash_cget(cmds_hd, &i, argv[0], s - argv[0]) >= 0)
+	*s = '\0';
+	if (!shash_get(cmds_hd, &i, argv[0]))
 		cmd_i = &cmds[i];
 
 	struct descr *d = &descr_map[fd];
@@ -594,12 +595,12 @@ static inline void descr_proc() {
 
 static void
 cmds_init() {
-	int i;
+	unsigned i;
 
 	cmds_hd = hash_init();
 
 	for (i = 0; cmds[i].name; i++)
-		hash_cput(cmds_hd, cmds[i].name, strlen(cmds[i].name), &i, sizeof(i));
+		shash_put(cmds_hd, cmds[i].name, &i, sizeof(i));
 }
 
 static long long timestamp() {
@@ -890,7 +891,7 @@ headers_get(size_t *body_start, char *next_lines)
 			if (s != key) {
 				if (s - key >= BUFSIZ)
 					*(key + BUFSIZ - 1) = '\0';
-				hash_sput(req_hd, key, value);
+				sshash_put(req_hd, key, value);
 				key = s += 2;
 			} else
 				*++s = '\0';
@@ -1003,13 +1004,13 @@ void do_GET_cb(char *buf, ssize_t len, int pid, int in, int out, void *arg) {
 	ndc_write(fd, buf, len);
 }
 
-static char *env_name(void *key, size_t key_size) {
+static char *env_name(char *key) {
 	static char buf[BUFSIZ];
 	int i = 0;
 	register char *b, *s;
 	memset(buf, 0, BUFSIZ);
-	strcpy(buf, "HTTP_");
-	for (s = (char *) key, b = buf + 5; *s && i < key_size; s++, b++, i++)
+	strncpy(buf, "HTTP_", sizeof(buf));
+	for (s = (char *) key, b = buf + 5; *s; s++, b++, i++)
 		if (*s == '-')
 			*b = '_';
 		else
@@ -1060,10 +1061,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	size_t body_start;
 	d->headers = headers_get(&body_start, argv[argc]);
 	uid_t uid;
-	char *ws_key = hash_sget(d->headers, "Sec-WebSocket-Key");
-
-	if (ws_key) {
-		if (ws_init(fd, ws_key))
+	char buf[BUFSIZ];
+	if (!shash_get(d->headers, buf, "Sec-WebSocket-Key")) {
+		if (ws_init(fd, buf))
 			return;
 		d->flags |= DF_WEBSOCKET;
 		TELNET_CMD(IAC, DO, TELOPT_NAWS);
@@ -1078,14 +1078,14 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	d->flags |= DF_TO_CLOSE;
 
 	if (config.flags & NDC_SSL && !d->cSSL) {
-		char *host = hash_sget(d->headers, "Host");
+		shash_get(d->headers, buf, "Host");
 		char response[1024];
 		snprintf(response, sizeof(response),
 				"HTTP/1.1 301 Moved Permanently\r\n"
 				"Location: https://%s/%s\r\n"
 				"Content-Length: 0\r\n"
 				"Connection: close\r\n"
-				"\r\n", host, argv[1]);
+				"\r\n", buf, argv[1]);
 		ndc_writef(fd, "%s", response);
 		if (!d->remaining_len)
 			ndc_close(fd);
@@ -1120,7 +1120,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	*filename = '\0';
 
 	if (lost)
-		sprintf(filename, ".%s", argv[1]);
+		snprintf(filename, 64, ".%s", argv[1]);
 
 	url_decode(filename);
 
@@ -1136,8 +1136,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			char uribuf[64];
 			char * uri;
 			char * query_string = strchr(argv[1], '?');
-			char key[BUFSIZ], *value;
-			ssize_t key_len;
+			char key[BUFSIZ], value[BUFSIZ];
 			struct hash_cursor c;
 			memcpy(uribuf, argv[1], sizeof(uribuf));
 			query_string = strchr(uribuf, '?');
@@ -1146,12 +1145,12 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			else
 				query_string = "";
 			args[0] = alt + 1;
-			c = hash_iter(d->headers);
-			while ((key_len = hash_next(key, &value, &c)) >= 0)
-				setenv(env_name(key, key_len), value, 1);
-			char *req_content_type = hash_sget(d->headers, "Content-Type");
-			if (!req_content_type)
-				req_content_type = "text/plain";
+			c = hash_iter(d->headers, NULL, 0);
+			while (hash_next(key, &value, &c))
+				setenv(env_name(key), value, 1);
+			char req_content_type[BUFSIZ];
+			if (shash_get(d->headers, req_content_type, "Content-Type"))
+				strncpy(req_content_type, "text/plain", sizeof(req_content_type));
 			setenv("CONTENT_TYPE", env_sane(req_content_type), 1);
 			setenv("DOCUMENT_URI", uribuf, 1);
 			setenv("QUERY_STRING", env_sane(query_string), 1);
@@ -1161,9 +1160,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
 			ndc_exec(args, do_GET_cb, &fd, body, strlen(body));
-			c = hash_iter(d->headers);
-			while ((key_len = hash_next(key, &value, &c)) >= 0)
-				unsetenv(env_name(key, key_len));
+			c = hash_iter(d->headers, NULL, 0);
+			while (hash_next(key, &value, &c))
+				unsetenv(env_name(key));
 			if (!d->remaining_len)
 				ndc_close(fd);
 			return;
@@ -1177,9 +1176,8 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 
 		content_type = "application/octet-stream";
 		if (ext) {
-			char *found = hash_sget(mime_hd, ext);
-			if (found)
-				content_type = found;
+			if (!shash_get(mime_hd, buf, ext))
+				content_type = buf;
 		}
 
 		want_fd = open(filename, O_RDONLY);
@@ -1244,7 +1242,7 @@ void ndc_set_flags(int fd, int flags) {
 void ndc_auth(int fd, char *username) {
 	struct descr *d = &descr_map[fd];
 	/* fprintf(stderr, "ndc_auth %d %s\n", fd, username); */
-	strcpy(d->username, username);
+	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
 	pty_open(fd);
 }
