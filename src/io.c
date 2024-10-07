@@ -107,7 +107,7 @@ ndc_close(int fd)
 		close(d->pty);
 		d->pty = -1;
 	}
-	if ((d->flags & DF_ACCEPTED) && d->cSSL) {
+	if (d->cSSL) {
 		SSL_shutdown(d->cSSL);
 		SSL_free(d->cSSL);
 		d->cSSL = NULL;
@@ -149,14 +149,19 @@ static int ssl_accept(int fd) {
 	}
 
 	int ssl_err = SSL_get_error(d->cSSL, res);
-
 	if (errno == EAGAIN && ssl_err == SSL_ERROR_WANT_READ)
 		return 0;
 
 	fprintf(stderr, "ssl_accept error %d %d %d %d %s\n", fd, res, ssl_err, errno, ERR_error_string(ssl_err, NULL));
 
-	SSL_shutdown(d->cSSL);
-	SSL_free(d->cSSL);
+	unsigned long openssl_err;
+	while ((openssl_err = ERR_get_error()) != 0) {
+		char buf[256];
+		ERR_error_string_n(openssl_err, buf, sizeof(buf));
+		fprintf(stderr, "OpenSSL error: %s\n", buf);
+	}
+
+	ERR_clear_error();
 	ndc_close(fd);
 	return 1;
 }
@@ -250,8 +255,8 @@ ndc_write_remaining(int fd) {
 	if (ret < 0 && errno == EAGAIN)
 		return -1;
 
-	d->remaining_len = 0;
-	if (d->flags & DF_TO_CLOSE)
+	d->remaining_len -= ret;
+	if (!d->remaining_len && d->flags & DF_TO_CLOSE)
 		ndc_close(fd);
 	return ret;
 }
@@ -474,12 +479,8 @@ descr_read(int fd)
 
 	/* fprintf(stderr, "descr_read %d\n", fd); */
 
-	if (!(d->flags & DF_ACCEPTED)) {
-		if (d->cSSL && ssl_accept(fd))
-			return 1;
-		if (!(d->flags & DF_ACCEPTED))
-			return 0;
-	}
+	if (!(d->flags & DF_ACCEPTED))
+		return 0;
 
 	ret = ndc_read(fd, d->cmd, sizeof(d->cmd));
 	switch (ret) {
@@ -581,6 +582,8 @@ static inline void descr_proc() {
 	for (register int i = 0; i < FD_SETSIZE; i++)
 		if (descr_map[i].remaining_len)
 			ndc_write_remaining(i);
+		else if (!(descr_map[i].flags & DF_ACCEPTED) && descr_map[i].cSSL)
+			ssl_accept(i);
 		else if (!FD_ISSET(i, &fds_read))
 			;
 		else if (i == srv_fd)
@@ -654,12 +657,19 @@ void ndc_init(struct ndc_config *config_r) {
 	ndc_srv_flags = config.flags | NDC_WAKE;
 
 	if (ndc_srv_flags & NDC_SSL) {
+
 		SSL_load_error_strings();
 		SSL_library_init();
 		OpenSSL_add_all_algorithms();
 		ssl_ctx = SSL_CTX_new(TLS_server_method());
+		SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+
+		const char *cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+			"ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384";
+
+		SSL_CTX_set_cipher_list(ssl_ctx, cipher_list);
 		SSL_CTX_set_ecdh_auto(ssl_ctx, 1);
-		SSL_CTX_use_certificate_file(ssl_ctx, config.ssl_crt, SSL_FILETYPE_PEM);
+		SSL_CTX_use_certificate_chain_file(ssl_ctx, config.ssl_crt);
 		SSL_CTX_use_PrivateKey_file(ssl_ctx, config.ssl_key, SSL_FILETYPE_PEM);
 		ERR_print_errors_fp(stderr);
 	}
@@ -1119,6 +1129,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	int want_fd = -1, lost = 1;
 	*filename = '\0';
 
+	if (argv[1][0] == '/' && argv[1][1] == '/')
+		argv[1]++;
+
 	if (lost)
 		snprintf(filename, 64, ".%s", argv[1]);
 
@@ -1133,7 +1146,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			total = strlen(status);
 		} else {
 			char * args[2] = { NULL, NULL };
-			char uribuf[64];
+			char uribuf[BUFSIZ];
 			char * uri;
 			char * query_string = strchr(argv[1], '?');
 			char key[BUFSIZ], value[BUFSIZ];
