@@ -42,6 +42,8 @@
 	ndc_write(fd, command, sizeof(command)); \
 }
 
+typedef void (*cmd_cb_t)(int cfd, char *buf, ssize_t len, int pid, int in, int out);
+
 struct descr {
 	SSL *cSSL;
 	int fd, flags, pty, pid;
@@ -372,11 +374,9 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	struct descr *d = &descr_map[fd];
 
-	if (!(d->flags & DF_AUTHENTICATED)) {
-		if (!cmd_i || !(cmd_i->flags & CF_NOAUTH))
-			return;
-		d->flags |= DF_CONNECTED;
-	}
+	if (!(d->flags & DF_AUTHENTICATED)
+			&& (!cmd_i || !(cmd_i->flags & CF_NOAUTH)))
+		return;
 
 	if ((!cmd_i && argc) || !(cmd_i->flags & CF_NOTRIM)) {
 		// this looks buggy let's fix it, please
@@ -759,10 +759,7 @@ int ndc_main() {
 static struct passwd *drop_priviledges(int fd) {
 	struct descr *d = &descr_map[fd];
 
-	if (!(d->flags & DF_AUTHENTICATED))
-		err(EXIT_FAILURE, "NOT AUTHENTICATED");
-
-	struct passwd *pw = getpwnam(d->username);
+	struct passwd *pw = getpwnam((d->flags & DF_AUTHENTICATED) ? d->username : "root");
 
 	if (!config.chroot) {
 		fprintf(stderr, "NOT CHROOTED\n");
@@ -918,7 +915,7 @@ headers_get(size_t *body_start, char *next_lines)
 }
 
 static inline int
-popen2(int *in, int *out, char * const args[])
+popen2(int cfd, int *in, int *out, char * const args[])
 {
 	pid_t p = -1;
 	int pipe_stdin[2], pipe_stdout[2];
@@ -927,6 +924,7 @@ popen2(int *in, int *out, char * const args[])
 		return p;
 
 	if(p == 0) { /* child */
+		struct passwd *pw = drop_priviledges(cfd);
 		do_cleanup = 0;
 		close(pipe_stdin[1]);
 		dup2(pipe_stdin[0], 0);
@@ -947,14 +945,14 @@ popen2(int *in, int *out, char * const args[])
 }
 
 static inline int
-ndc_exec(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len) {
+ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t input_len) {
 	static char buf[BUFSIZ * 64];
 	ssize_t len = 0, total = 0;
 	int start = 1, cont = 0;
 	int in, out, pid, ret = -1;
 
-	pid = popen2(&in, &out, args); // should assert it equals 0
-	callback("", -1, pid, in, out, arg);
+	pid = popen2(cfd, &in, &out, args); // should assert it equals 0
+	callback(cfd, "", -1, pid, in, out);
 
 	fd_set read_fds;
 	FD_ZERO(&read_fds);
@@ -985,10 +983,10 @@ ndc_exec(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t 
 
 		if (len > 0) {
 			buf[len] = '\0';
-			callback(buf, len, pid, in, out, arg);
+			callback(cfd, buf, len, pid, in, out);
 			total += len;
 		} else if (len == 0) {
-			callback("", 0, pid, in, out, arg);
+			callback(cfd, "", 0, pid, in, out);
 			ret = 0;
 			break;
 		} else switch (errno) {
@@ -1007,8 +1005,7 @@ out:	close(in);
 	return 0;
 }
 
-void do_GET_cb(char *buf, ssize_t len, int pid, int in, int out, void *arg) {
-	int fd = * (int *) arg;
+void do_GET_cb(int fd, char *buf, ssize_t len, int pid, int in, int out) {
 	if (len <= 0)
 		return;
 	ndc_write(fd, buf, len);
@@ -1064,6 +1061,12 @@ static char *env_sane(char *str) {
 	return buf;
 }
 
+static void ndc_auth_try(int fd) {
+	char *user = ndc_auth_check(fd);
+	if (user)
+		ndc_auth(fd, user);
+}
+
 static void request_handle(int fd, int argc, char *argv[], int post) {
 	char *method = post ? "POST" : "GET";
 	struct passwd *pw;
@@ -1077,14 +1080,17 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			return;
 		d->flags |= DF_WEBSOCKET;
 		TELNET_CMD(IAC, DO, TELOPT_NAWS);
-		d->flags |= DF_CONNECTED;
-		ndc_connect(fd);
+		if (ndc_connect(fd)) {
+			d->flags |= DF_CONNECTED;
+			pty_open(fd);
+		}
 		return;
 	} else if (argc < 2 || strstr(argv[1], "..")) {
 		ndc_close(fd);
 		return;
 	}
 
+	ndc_auth_try(fd);
 	d->flags |= DF_TO_CLOSE;
 
 	if (config.flags & NDC_SSL && !d->cSSL) {
@@ -1172,7 +1178,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
-			ndc_exec(args, do_GET_cb, &fd, body, strlen(body));
+			ndc_exec(fd, args, do_GET_cb, body, strlen(body));
 			c = hash_iter(d->headers, NULL, 0);
 			while (hash_next(key, &value, &c))
 				unsetenv(env_name(key));
@@ -1208,6 +1214,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			"Server: ndc/0.0.1 (Unix)\r\n"
 			"Content-Length: %lu\r\n"
 			"Content-Type: %s\r\n"
+			"Cache-Control: max-age=5184000\r\n"
 			"\r\n",
 			status, date, total, content_type);
 
@@ -1257,5 +1264,4 @@ void ndc_auth(int fd, char *username) {
 	/* fprintf(stderr, "ndc_auth %d %s\n", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
-	pty_open(fd);
 }

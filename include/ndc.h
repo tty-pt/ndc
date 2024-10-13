@@ -32,7 +32,6 @@ struct ndc_config {
 };
 
 typedef void ndc_cb_t(int fd, int argc, char *argv[]);
-typedef void (*cmd_cb_t)(char *buf, ssize_t len, int pid, int in, int out, void *arg);
 
 struct cmd_slot {
 	char *name;
@@ -54,7 +53,7 @@ int ndc_main();
 /* define these */
 extern void ndc_update(unsigned long long dt);
 extern void ndc_vim(int fd, int argc, char *argv[]);
-extern void ndc_connect(int fd);
+extern int ndc_connect(int fd);
 extern void ndc_disconnect(int fd);
 extern void ndc_command(int fd, int argc, char *argv[]); /* will run on any command */
 
@@ -68,11 +67,11 @@ void ndc_wall(const char *msg);
 ndc_cb_t do_GET, do_POST, do_sh;
 
 void ndc_pty(int fd, char * const args[]);
-/* int ndc_exec(char * const args[], cmd_cb_t callback, void *arg, void *input, size_t input_len); */
 
 int ndc_flags(int fd);
 void ndc_close(int fd);
 void ndc_set_flags(int fd, int flags);
+char *ndc_auth_check(int fd);
 void ndc_auth(int fd, char *username);
 int ndc_headers(int fd);
 

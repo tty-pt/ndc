@@ -37,8 +37,9 @@ ndc_vim(int fd, int argc, char *argv[])
 {
 }
 
-void
+int
 ndc_connect(int fd) {
+	return 0;
 }
 
 void
@@ -47,6 +48,11 @@ ndc_ws_init(int fd) {
 
 void
 ndc_disconnect(int fd) {
+}
+
+char *
+ndc_auth_check(int fd) {
+	return NULL;
 }
 
 void
