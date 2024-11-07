@@ -800,6 +800,9 @@ static struct passwd *drop_priviledges(int fd) {
 	if (setgroups(0, NULL) != 0)
 		err(EXIT_FAILURE, "drop_priviledges setgroups");
 
+	if (initgroups(pw->pw_name, pw->pw_gid))
+		err(EXIT_FAILURE, "drop_priviledges initgroups");
+
 	if (setgid(new_gid) != 0)
 		err(EXIT_FAILURE, "drop_priviledges setgid");
 
