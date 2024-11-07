@@ -1,7 +1,15 @@
 #ifndef IIO_H
 #define IIO_H
 
-int ndc_low_write(int fd, void *data, size_t len);
-int ndc_low_read(int fd, void *to, size_t len);
+#include <stdio.h>
+#include <sys/select.h>
+
+typedef ssize_t (*io_t)(int fd, void *data, size_t len);
+
+struct io {
+	io_t read, write, lower_read, lower_write;
+};
+
+extern struct io io[FD_SETSIZE];
 
 #endif

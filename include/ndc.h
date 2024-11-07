@@ -6,13 +6,13 @@
 
 enum descr_flags {
 	DF_CONNECTED = 1,
-	DF_BINARY = 0x2,
+	// RESERVED = 0x2,
 	DF_WEBSOCKET = 4,
 	DF_TO_CLOSE = 8,
 	DF_ACCEPTED = 16,
 	DF_AUTHENTICATED = 32,
 	DF_RESERVED = 64,
-	DF_FIN = 0x80,
+	// RESERVED = 0x80,
 };
 
 enum ndc_srv_flags {

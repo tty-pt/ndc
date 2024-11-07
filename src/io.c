@@ -3,6 +3,7 @@
 #define _XOPEN_SOURCE 600
 
 #include "../include/ndc.h"
+#include "../include/iio.h"
 #include <arpa/telnet.h>
 #include <ctype.h>
 #include <err.h>
@@ -44,10 +45,16 @@
 
 typedef void (*cmd_cb_t)(int cfd, char *buf, ssize_t len, int pid, int in, int out);
 
+#define FIRST_INPUT_SIZE (BUFSIZ * 2)
+
+static unsigned char *input;
+static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
+
+struct io io[FD_SETSIZE];
+
 struct descr {
 	SSL *cSSL;
 	int fd, flags, pty, pid;
-	unsigned char cmd[BUFSIZ * 2];
 	char username[BUFSIZ];
 	struct winsize wsz;
 	struct termios tty;
@@ -168,44 +175,18 @@ static int ssl_accept(int fd) {
 	return 1;
 }
 
-static void descr_new(int ssl) {
-	struct sockaddr_in addr;
-	socklen_t addr_len = (socklen_t)sizeof(addr);
-	int fd = accept(ssl ? srv_ssl_fd : srv_fd, (struct sockaddr *) &addr, &addr_len);
-	struct descr *d;
-
-	if (fd <= 0)
-		return;
-
-	/* fprintf(stderr, "descr_new %d\n", fd); */
-
-	FD_SET(fd, &fds_active);
-
-	d = &descr_map[fd];
-	memset(d, 0, sizeof(struct descr));
-	d->fd = fd;
-	d->flags = DF_BINARY | DF_FIN | DF_ACCEPTED;
-	d->remaining_size = BUFSIZ * 64;
-	d->remaining = malloc(d->remaining_size);
-
-	errno = 0;
-	if (ssl) {
-		d->cSSL = SSL_new(ssl_ctx);
-		SSL_set_fd(d->cSSL, fd);
-		if (ssl_accept(fd))
-			return;
-	}
+ssize_t
+ndc_ssl_low_read(int fd, void *to, size_t len)
+{
+	return SSL_read(descr_map[fd].cSSL, to, len);
 }
 
 static void
 cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 {
-	static unsigned char buf[BUFSIZ * 30];
 	struct cmd cmd;
-	register char *p = buf;
+	register char *p = input;
 	int argc = 0;
-
-	memcpy(buf, input, len);
 
 	p[len] = '\0';
 
@@ -235,24 +216,22 @@ cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 	*argc_r = argc;
 }
 
-static int
-ndc_lower_write(int fd, void *from, size_t len)
+static ssize_t
+ndc_ssl_lower_write(int fd, void *from, size_t len)
 {
 	struct descr *d = &descr_map[fd];
-
-	return d->cSSL
-		? SSL_write(d->cSSL, from, len)
-		: write(fd, from, len);
+	return SSL_write(descr_map[fd].cSSL, from, len);
 }
 
 static int
 ndc_write_remaining(int fd) {
 	struct descr *d = &descr_map[fd];
+	struct io *dio = &io[fd];
 
 	if (!d->remaining_len)
 		return 0;
 
-	int ret = ndc_lower_write(fd, d->remaining, d->remaining_len);
+	int ret = dio->lower_write(fd, d->remaining, d->remaining_len);
 
 	if (ret < 0 && errno == EAGAIN)
 		return -1;
@@ -276,10 +255,11 @@ ndc_rem_may_inc(int fd, size_t len) {
 	d->remaining = realloc(d->remaining, d->remaining_size);
 }
 
-int
+ssize_t
 ndc_low_write(int fd, void *from, size_t len)
 {
 	struct descr *d = &descr_map[fd];
+	struct io *dio = &io[fd];
 
 	if (d->remaining_len) {
 		size_t olen = d->remaining_len;
@@ -290,7 +270,7 @@ ndc_low_write(int fd, void *from, size_t len)
 	}
 
 	d->remaining_len = 0;
-	int ret = ndc_lower_write(fd, from, len);
+	int ret = dio->lower_write(fd, from, len);
 
 	if (ret < 0 && errno == EAGAIN) {
 		ndc_rem_may_inc(fd, len);
@@ -300,22 +280,65 @@ ndc_low_write(int fd, void *from, size_t len)
 	return ret;
 }
 
-int
-ndc_low_read(int fd, void *to, size_t len)
-{
-	struct descr *d = &descr_map[fd];
+static void descr_new(int ssl) {
+	struct sockaddr_in addr;
+	socklen_t addr_len = (socklen_t)sizeof(addr);
+	int fd = accept(ssl ? srv_ssl_fd : srv_fd, (struct sockaddr *) &addr, &addr_len);
+	struct descr *d;
+	struct io *dio;
 
-	return d->cSSL
-		? SSL_read(d->cSSL, to, len)
-		: read(fd, to, len);
+	if (fd <= 0)
+		return;
+
+	/* fprintf(stderr, "descr_new %d\n", fd); */
+
+	FD_SET(fd, &fds_active);
+
+	d = &descr_map[fd];
+	dio = &io[fd];
+	memset(d, 0, sizeof(struct descr));
+	d->fd = fd;
+	d->flags = DF_ACCEPTED;
+	d->remaining_size = BUFSIZ * 64;
+	d->remaining = malloc(d->remaining_size);
+	dio->write = ndc_low_write;
+
+	errno = 0;
+	if (ssl) {
+		d->cSSL = SSL_new(ssl_ctx);
+		dio->read = dio->lower_read = ndc_ssl_low_read;
+		dio->lower_write = ndc_ssl_lower_write;
+		SSL_set_fd(d->cSSL, fd);
+		if (ssl_accept(fd))
+			return;
+	} else {
+		dio->read = dio->lower_read = read;
+		dio->lower_write = (io_t) write;
+	}
 }
 
-static int
-ndc_read(int fd, void *data, size_t len)
+inline static ssize_t
+ndc_read(int fd)
 {
-	struct descr *d = &descr_map[fd];
-	/* fprintf(stderr, "ndc_read %d %lu\n", fd, len); */
-	return d->flags & DF_WEBSOCKET ? ws_read(fd, data, len) : ndc_low_read(fd, data, len);
+	char buf[BUFSIZ];
+	struct io *dio = &io[fd];
+	input_len = 0;
+	int ret;
+
+	while (1) switch ((ret = dio->read(fd, buf, sizeof(buf)))) {
+	case -1:
+	case 0: return ret;
+	default:
+		if (input_len + ret > input_size) {
+			input_size *= 2;
+			input_size += ret;
+			input = realloc(input, input_size);
+		}
+		memcpy(input + input_len, buf, ret);
+		input_len += ret;
+		if (ret < sizeof(buf))
+			return input_len;
+	}
 }
 
 int
@@ -323,9 +346,9 @@ ndc_write(int fd, void *data, size_t len)
 {
 	if (fd <= 0)
 		return -1;
-	struct descr *d = &descr_map[fd];
+	struct io *dio = &io[fd];
 	/* fprintf(stderr, "ndc_write %d %lu %d\n", fd, len, d->flags); */
-	int ret = d->flags & DF_WEBSOCKET ? ws_write(fd, data, len, d->flags) : ndc_low_write(fd, data, len);
+	int ret = dio->write(fd, data, len);
 	return ret;
 }
 
@@ -482,7 +505,7 @@ descr_read(int fd)
 	if (!(d->flags & DF_ACCEPTED))
 		return 0;
 
-	ret = ndc_read(fd, d->cmd, sizeof(d->cmd));
+	ret = ndc_read(fd);
 	switch (ret) {
 	case -1:
 		if (errno == EAGAIN)
@@ -494,36 +517,36 @@ descr_read(int fd)
 	case 0: return -1;
 	}
 
-	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, d->cmd); */
+	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, input); */
 
 	int i = 0, li = 0;
 
-	for (; i < ret && d->cmd[i] != IAC; i++);
+	for (; i < ret && input[i] != IAC; i++);
 
 	if (i == ret)
 		i = 0;
 
-	while (i < ret && d->cmd[i + 0] == IAC) if (d->cmd[i + 1] == SB && d->cmd[i + 2] == TELOPT_NAWS) {
-		unsigned char colsHighByte = d->cmd[i + 3];
-		unsigned char colsLowByte = d->cmd[i + 4];
-		unsigned char rowsHighByte = d->cmd[i + 5];
-		unsigned char rowsLowByte = d->cmd[i + 6];
+	while (i < ret && input[i + 0] == IAC) if (input[i + 1] == SB && input[i + 2] == TELOPT_NAWS) {
+		unsigned char colsHighByte = input[i + 3];
+		unsigned char colsLowByte = input[i + 4];
+		unsigned char rowsHighByte = input[i + 5];
+		unsigned char rowsLowByte = input[i + 6];
 		memset(&d->wsz, 0, sizeof(d->wsz));
 		d->wsz.ws_col = (colsHighByte << 8) | colsLowByte;
 		d->wsz.ws_row = (rowsHighByte << 8) | rowsLowByte;
 		ioctl(d->pty, TIOCSWINSZ, &d->wsz);
 		i += 9;
-	} else if (d->cmd[i + 1] == DO && d->cmd[i + 2] == TELOPT_SGA) {
+	} else if (input[i + 1] == DO && input[i + 2] == TELOPT_SGA) {
 		/* this must change pty tty settings as well. Not just reply */
 		/* TELNET_CMD(IAC, WONT, TELOPT_ECHO, IAC, WILL, TELOPT_SGA); */
 		i += 3;
-	} else if (d->cmd[i + 1] == DO) {
-		/* TELNET_CMD(IAC, WILL, d->cmd[i + 2]); */
+	} else if (input[i + 1] == DO) {
+		/* TELNET_CMD(IAC, WILL, input[i + 2]); */
 		i += 3;
-	} else if (d->cmd[i + 1] == DONT) {
-		/* TELNET_CMD(IAC, WONT, d->cmd[i + 2]); */
+	} else if (input[i + 1] == DONT) {
+		/* TELNET_CMD(IAC, WONT, input[i + 2]); */
 		i += 3;
-	} else if (d->cmd[i + 1] == DO || d->cmd[i + 1] == DONT || d->cmd[i + 1] == WILL)
+	} else if (input[i + 1] == DO || input[i + 1] == DONT || input[i + 1] == WILL)
 		i += 3;
 	else
 		i++;
@@ -532,12 +555,12 @@ descr_read(int fd)
 		if (waitpid(d->pid, NULL, WNOHANG)) {
 			return 0;
 		} else if (i < ret) {
-			write(d->pty, d->cmd + i, ret);
+			write(d->pty, input + i, ret);
 			return 0;
 		}
 	}
 
-	return cmd_parse(fd, (char *) d->cmd, ret);
+	return cmd_parse(fd, (char *) input, ret);
 }
 
 static void
@@ -700,6 +723,8 @@ void ndc_init(struct ndc_config *config_r) {
 	signal(SIGINT, sig_shutdown);
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGHUP, SIG_IGN);
+
+	input = malloc(input_size);
 
 	if (config.flags & NDC_SSL)
 		ndc_bind(&srv_ssl_fd, 1);
@@ -1076,9 +1101,12 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	uid_t uid;
 	char buf[BUFSIZ];
 	if (!shash_get(d->headers, buf, "Sec-WebSocket-Key")) {
+		struct io *dio = &io[fd];
 		if (ws_init(fd, buf))
 			return;
 		d->flags |= DF_WEBSOCKET;
+		dio->read = ws_read;
+		dio->write = ws_write;
 		TELNET_CMD(IAC, DO, TELOPT_NAWS);
 		if (ndc_connect(fd)) {
 			d->flags |= DF_CONNECTED;

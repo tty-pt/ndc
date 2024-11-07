@@ -1,6 +1,6 @@
-#include "ws.h"
-#include "iio.h"
-#include "ndc.h"
+#include "../include/ws.h"
+#include "../include/iio.h"
+#include "../include/ndc.h"
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <err.h>
@@ -14,6 +14,13 @@
 
 #define OPCODE(head) ((unsigned char) (head[0] & 0x0f))
 #define PAYLOAD_LEN(head) ((unsigned char) (head[1] & 0x7f))
+
+enum ws_flags {
+	WS_BINARY = 0x2,
+	WS_FIN = 0x80,
+};
+
+int ws_flags[FD_SETSIZE];
 
 #ifdef __OpenBSD__
 int __b64_ntop(unsigned char const *src, size_t srclength,
@@ -97,16 +104,17 @@ ws_init(int cfd, char *ws_key) {
 
 	b64_ntop(hash, SHA_DIGEST_LENGTH, common_resp + 129, 29);
 	memcpy(common_resp + 129 + 28, "\r\n\r\n", 5);
-	ndc_low_write(cfd, common_resp, 129 + 28 + 4);
+	io[cfd].lower_write(cfd, common_resp, 129 + 28 + 4);
 	memset(&frame_map[cfd], 0, sizeof(struct ws_frame));
+	ws_flags[cfd] = WS_BINARY | WS_FIN;
 	return 0;
 }
 
-int
-ws_write(int cfd, const void *data, size_t n, int flags)
+ssize_t
+ws_write(int cfd, void *data, size_t n)
 {
 	unsigned char head[2];
-	head[0] = (flags & (DF_BINARY | DF_FIN));
+	head[0] = (ws_flags[cfd] & (WS_BINARY | WS_FIN));
 	head[1] = 0;
 	size_t len = sizeof(head);
 	int smallest = n < 126;
@@ -130,7 +138,7 @@ ws_write(int cfd, const void *data, size_t n, int flags)
 	}
 
 	memcpy(frame + len, data, n);
-	return ndc_low_write(cfd, frame, len + n) < len + n;
+	return io[cfd].lower_write(cfd, frame, len + n) < len + n;
 }
 
 void
@@ -138,12 +146,12 @@ ws_close(int cfd) {
 	unsigned char head[2] = { 0x88, 0x02 };
 	unsigned code = 1008;
 
-	ndc_low_write(cfd, head, sizeof(head));
-	ndc_low_write(cfd, &code, sizeof(code));
+	io[cfd].lower_write(cfd, head, sizeof(head));
+	io[cfd].lower_write(cfd, (char *) &code, sizeof(code));
 }
 
-int
-ws_read(int cfd, char *data, size_t len)
+ssize_t
+ws_read(int cfd, void *data, size_t len)
 {
 	struct ws_frame *frame = &frame_map[cfd];
 	uint64_t pl;
@@ -156,7 +164,7 @@ ws_read(int cfd, char *data, size_t len)
 		goto pl;
 
 	errno = 0;
-	n = ndc_low_read(cfd, frame->head, sizeof(frame->head));
+	n = io[cfd].lower_read(cfd, frame->head, sizeof(frame->head));
 	if (n == 0)
 		return 0;
 	if (n != sizeof(frame->head)) {
@@ -172,7 +180,7 @@ pl:	pl = PAYLOAD_LEN(frame->head);
 
 	if (pl == 126) {
 		uint16_t rpl;
-		n = ndc_low_read(cfd, &rpl, sizeof(rpl));
+		n = io[cfd].lower_read(cfd, &rpl, sizeof(rpl));
 		if (n != sizeof(rpl)) {
 			if (errno != EAGAIN)
 				warn("ws_read %d: bad rpl size\n", cfd);
@@ -181,7 +189,7 @@ pl:	pl = PAYLOAD_LEN(frame->head);
 		pl = rpl;
 	} else if (pl == 127) {
 		uint64_t rpl;
-		n = ndc_low_read(cfd, &rpl, sizeof(rpl));
+		n = io[cfd].lower_read(cfd, &rpl, sizeof(rpl));
 		if (n != sizeof(rpl)) {
 			if (errno != EAGAIN)
 				warn("ws_read %d: bad rpl size 2\n", cfd);
@@ -192,7 +200,7 @@ pl:	pl = PAYLOAD_LEN(frame->head);
 
 	frame->pl = pl;
 
-mk:	n = ndc_low_read(cfd, frame->mk, sizeof(frame->mk) + pl);
+mk:	n = io[cfd].lower_read(cfd, frame->mk, sizeof(frame->mk) + pl);
 	if (n != sizeof(frame->mk) + pl) {
 		warn("ws_read %d: bad frame mk size\n", cfd);
 		goto error;
@@ -213,7 +221,8 @@ int
 ws_dprintf(int fd, const char *format, va_list ap)
 {
 	static char buf[BUFSIZ];
-	return ws_write(fd, buf, vsnprintf(buf, sizeof(buf), format, ap), DF_BINARY & DF_FIN);
+	ws_flags[fd] = WS_BINARY & WS_FIN;
+	return ws_write(fd, buf, vsnprintf(buf, sizeof(buf), format, ap));
 }
 
 int
