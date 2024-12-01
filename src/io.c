@@ -20,8 +20,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -49,6 +51,7 @@ typedef void (*cmd_cb_t)(int cfd, char *buf, ssize_t len, int pid, int in, int o
 
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
+static unsigned ssl_certs, ssl_keys, ssl_domains, ssl_contexts;
 
 struct io io[FD_SETSIZE];
 
@@ -69,7 +72,6 @@ struct cmd {
 	char *argv[CMD_ARGM];
 };
 
-
 struct popen {
 	int in, out, pid;
 };
@@ -85,7 +87,7 @@ static unsigned cmds_hd, mime_hd;
 static fd_set fds_read, fds_active;
 static size_t cmds_len = 0;
 long long dt, tack = 0;
-SSL_CTX *ssl_ctx;
+SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
 
@@ -305,7 +307,7 @@ static void descr_new(int ssl) {
 
 	errno = 0;
 	if (ssl) {
-		d->cSSL = SSL_new(ssl_ctx);
+		d->cSSL = SSL_new(default_ssl_ctx);
 		dio->read = dio->lower_read = ndc_ssl_low_read;
 		dio->lower_write = ndc_ssl_lower_write;
 		SSL_set_fd(d->cSSL, fd);
@@ -675,6 +677,51 @@ ndc_bind(int *srv_fd_r, int ssl) {
 	*srv_fd_r = srv_fd;
 }
 
+static int ndc_sni(SSL *ssl, int *ad, void *arg) {
+	const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+
+	if (!servername)
+		return SSL_TLSEXT_ERR_NOACK; // no SNI
+
+	unsigned cert_id;
+	SSL_CTX *ssl_ctx;
+
+	if (shash_get(ssl_domains, &cert_id, (char *) servername))
+		return SSL_TLSEXT_ERR_NOACK;
+
+	uhash_get(ssl_contexts, &ssl_ctx, cert_id);
+	SSL_set_SSL_CTX(ssl, ssl_ctx);
+
+	return SSL_TLSEXT_ERR_OK;
+}
+
+SSL_CTX *ndc_ctx_new(char *crt, char *key) {
+	SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_server_method());
+	SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+
+	const char *cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+		"ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384";
+
+	SSL_CTX_set_cipher_list(ssl_ctx, cipher_list);
+	SSL_CTX_set_ecdh_auto(ssl_ctx, 1);
+
+	if (SSL_CTX_use_certificate_chain_file(ssl_ctx, crt) == -1)
+		err(EXIT_FAILURE, "SSL_CTX_use_certificate_chain_file");
+	if (SSL_CTX_use_PrivateKey_file(ssl_ctx, key, SSL_FILETYPE_PEM) == -1)
+		err(EXIT_FAILURE, "SSL_CTX_use_certificate_chain_file");
+
+	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
+	if (!fp)
+		err(EXIT_FAILURE, "open dhparam.pem");
+	DH *dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
+	if (!dh)
+		err(EXIT_FAILURE, "PEM_read_DHparams");
+	SSL_CTX_set_tmp_dh(ssl_ctx, dh);
+
+	/* SSL_CTX_set_tlsext_servername_callback(ssl_ctx, ndc_sni); */
+	return ssl_ctx;
+}
+
 void ndc_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
 	ndc_srv_flags = config.flags | NDC_WAKE;
@@ -684,16 +731,15 @@ void ndc_init(struct ndc_config *config_r) {
 		SSL_load_error_strings();
 		SSL_library_init();
 		OpenSSL_add_all_algorithms();
-		ssl_ctx = SSL_CTX_new(TLS_server_method());
-		SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
 
-		const char *cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
-			"ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384";
+		char *crt, *key;
+		lhash_get(ssl_certs, &crt, 0);
+		uhash_get(ssl_keys, &key, 0);
 
-		SSL_CTX_set_cipher_list(ssl_ctx, cipher_list);
-		SSL_CTX_set_ecdh_auto(ssl_ctx, 1);
-		SSL_CTX_use_certificate_chain_file(ssl_ctx, config.ssl_crt);
-		SSL_CTX_use_PrivateKey_file(ssl_ctx, config.ssl_key, SSL_FILETYPE_PEM);
+		default_ssl_ctx = ndc_ctx_new(crt, key);
+
+		SSL_CTX_set_tlsext_servername_callback(default_ssl_ctx, ndc_sni);
+
 		ERR_print_errors_fp(stderr);
 	}
 
@@ -1295,4 +1341,89 @@ void ndc_auth(int fd, char *username) {
 	/* fprintf(stderr, "ndc_auth %d %s\n", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
+}
+
+void ndc_pre_init() {
+	ssl_certs = lhash_init(sizeof(char*));
+	ssl_keys = hash_init();
+	ssl_contexts = hash_init();
+	ssl_domains = hash_init();
+}
+
+void _ndc_cert_add(char *domain, char *crt, char *key) {
+	SSL_CTX *ssl_ctx = ndc_ctx_new(crt, key);
+
+	unsigned id = lhash_new(ssl_certs, &crt);
+	uhash_put(ssl_keys, id, &key, sizeof(char *));
+	uhash_put(ssl_contexts, id, &ssl_ctx, sizeof(SSL_CTX *));
+	shash_put(ssl_domains, domain, &id, sizeof(id));
+}
+
+void ndc_cert_add(char *optarg) {
+	char domain[BUFSIZ], crt[BUFSIZ], *ioc;
+	ioc = strchr(optarg, ':');
+	if (!ioc) {
+		fprintf(stderr, "Invalid cert info\n");
+		exit(EXIT_FAILURE);
+	}
+	*ioc = '\0';
+	strcpy(domain, optarg);
+	optarg = ioc + 1;
+	ioc = strchr(optarg, ':');
+	if (!ioc) {
+		fprintf(stderr, "Invalid cert info\n");
+		exit(EXIT_FAILURE);
+	}
+	*ioc = '\0';
+	strcpy(crt, optarg);
+	_ndc_cert_add(strdup(domain), strdup(crt), strdup(ioc + 1));
+}
+
+
+void ndc_certs_add(char *certs_file) {
+	int fd = open(certs_file, O_RDONLY);
+
+	if (fd < 0) {
+		perror("ndc_certs_add: Failed to open file");
+		exit(EXIT_FAILURE);
+	}
+
+	struct stat sb;
+	if (fstat(fd, &sb) == -1) {
+		perror("ndc_certs_add: Failed to get file size");
+		close(fd);
+		exit(EXIT_FAILURE);
+	}
+
+	size_t file_size = sb.st_size;
+
+	char *mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	if (mapped == MAP_FAILED) {
+		perror("ndc_certs_add: Failed to mmap file");
+		close(fd);
+		exit(EXIT_FAILURE);
+	}
+
+	close(fd);
+
+	char *start = mapped;
+	char *end = mapped + file_size;
+	while (start < end) {
+		char *line_end = memchr(start, '\n', end - start);
+		if (!line_end) {
+			ndc_cert_add(start);
+			break;
+		}
+
+		char temp = *line_end;
+		*line_end = '\0';
+		ndc_cert_add(start);
+		*line_end = temp;
+		start = line_end + 1;
+	}
+
+	if (munmap(mapped, file_size) == -1) {
+		perror("ndc_certs_add: Failed to munmap file");
+		exit(EXIT_FAILURE);
+	}
 }

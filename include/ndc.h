@@ -24,10 +24,7 @@ enum ndc_srv_flags {
 };
 
 struct ndc_config {
-	char * chroot,
-	     * ssl_crt, 
-	     * ssl_key;
-	
+	char * chroot;
 	unsigned flags, port, ssl_port;
 };
 
@@ -74,5 +71,8 @@ void ndc_set_flags(int fd, int flags);
 char *ndc_auth_check(int fd);
 void ndc_auth(int fd, char *username);
 int ndc_headers(int fd);
+void ndc_pre_init();
+void ndc_cert_add(char *str);
+void ndc_certs_add(char *fname);
 
 #endif

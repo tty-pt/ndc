@@ -1,4 +1,4 @@
-#include "ndc.h"
+#include "./../include/ndc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,28 +68,32 @@ usage(char *prog) {
 	fprintf(stderr, "        -r        root multiplex mode\n");
 	fprintf(stderr, "        -?        display this message.\n");
 }
+
 int
 main(int argc, char *argv[])
 {
+	char domain[BUFSIZ], crt[BUFSIZ], *ioc;
 	struct ndc_config config = {
 		.flags = 0,
 	};
 	register char c;
 
-	while ((c = getopt(argc, argv, "?dk:c:C:rp:s:")) != -1) {
+	ndc_pre_init();
+
+	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) {
 		switch (c) {
 		case 'd':
 			config.flags |= NDC_DETACH;
 			break;
 
+		case 'K':
+			config.flags |= NDC_SSL;
+			ndc_certs_add(optarg);
+			break;
+
 		case 'k':
 			config.flags |= NDC_SSL;
-			config.ssl_key = strdup(optarg);
-			break;
-			
-		case 'c':
-			config.flags |= NDC_SSL;
-			config.ssl_crt = strdup(optarg);
+			ndc_cert_add(optarg);
 			break;
 			
 		case 'C':
