@@ -28,6 +28,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <termios.h>
 #include <unistd.h>
 #include <qhash.h>
@@ -90,6 +91,33 @@ long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
+
+typedef void (*log_t)(int type, const char *fmt, ...);
+
+static void
+ndc_logger_stderr(int type, const char *fmt, ...)
+{
+        va_list va;
+        va_start(va, fmt);
+        int ret = vfprintf(stderr, fmt, va);
+        va_end(va);
+}
+
+log_t ndclog = ndc_logger_stderr;
+
+static inline void ndclog_perror(char *str) {
+        ndclog(LOG_ERR, "%s: %s", str, strerror(errno));
+}
+
+static inline void ndclog_err(char *str) {
+        ndclog_perror(str);
+        exit(EXIT_FAILURE);
+}
+
+void hash_set_logger(log_t logger) {
+        ndclog = logger;
+}
+
 
 void
 ndc_close(int fd)
@@ -460,20 +488,20 @@ static void pty_open(int fd) {
 	struct descr *d = &descr_map[fd];
 
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
-		err(EXIT_FAILURE, "pty_open fcntl F_SETFL O_NONBLOCK");
+		ndclog_err("pty_open fcntl F_SETFL O_NONBLOCK");
 
 	d->pty = posix_openpt(O_RDWR | O_NOCTTY);
 
 	/* fprintf(stderr, "pty_open %d %d\n", fd, d->pty); */
 
 	if (d->pty == -1)
-		err(EXIT_FAILURE, "pty_open posix_openpt");
+		ndclog_err("pty_open posix_openpt");
 
 	if (grantpt(d->pty) == -1)
-		err(EXIT_FAILURE, "pty_open grantpt");
+		ndclog_err("pty_open grantpt");
 
 	if (unlockpt(d->pty) == -1)
-		err(EXIT_FAILURE, "pty_open unlockpt");
+		ndclog_err("pty_open unlockpt");
 
 	int flags = fcntl(d->pty, F_GETFL, 0);
 	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
@@ -513,7 +541,7 @@ descr_read(int fd)
 		if (errno == EAGAIN)
 			return 0;
 
-		fprintf(stderr, "descr_read: failed - will close");
+		ndclog(LOG_ERR, "descr_read: failed - will close");
 		return -1;
 	/* case 0: return 0; */
 	case 0: return -1;
@@ -642,21 +670,21 @@ ndc_bind(int *srv_fd_r, int ssl) {
 	int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
 
 	if (srv_fd < 0)
-		err(EXIT_FAILURE, "socket");
+		ndclog_err("socket");
 
 	int opt = 1;
 	if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0)
-		err(EXIT_FAILURE, "srv_fd setsockopt SO_REUSEADDR");
+		ndclog_err("srv_fd setsockopt SO_REUSEADDR");
 
 	opt = 1;
 	if (setsockopt(srv_fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt)) < 0)
-		err(EXIT_FAILURE, "srv_fd setsockopt SO_KEEPALIVE");
+		ndclog_err("srv_fd setsockopt SO_KEEPALIVE");
 
 	if (fcntl(srv_fd, F_SETFL, O_NONBLOCK) == -1)
-		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL O_NONBLOCK");
+		ndclog_err("srv_fd fcntl F_SETFL O_NONBLOCK");
 
 	if (fcntl(srv_fd, F_SETFD, FD_CLOEXEC) == -1)
-		err(EXIT_FAILURE, "srv_fd fcntl F_SETFL FD_CLOEXEC");
+		ndclog_err("srv_fd fcntl F_SETFL FD_CLOEXEC");
 
 	struct sockaddr_in server;
 	server.sin_family = AF_INET;
@@ -666,7 +694,7 @@ ndc_bind(int *srv_fd_r, int ssl) {
 			: (config.port ? config.port : 80));
 
 	if (bind(srv_fd, (struct sockaddr *) &server, sizeof(server)))
-		err(EXIT_FAILURE, "bind");
+		ndclog_err("bind");
 
 	descr_map[srv_fd].fd = srv_fd;
 
@@ -706,20 +734,26 @@ SSL_CTX *ndc_ctx_new(char *crt, char *key) {
 	SSL_CTX_set_ecdh_auto(ssl_ctx, 1);
 
 	if (SSL_CTX_use_certificate_chain_file(ssl_ctx, crt) == -1)
-		err(EXIT_FAILURE, "SSL_CTX_use_certificate_chain_file");
+		ndclog_err("SSL_CTX_use_certificate_chain_file");
 	if (SSL_CTX_use_PrivateKey_file(ssl_ctx, key, SSL_FILETYPE_PEM) == -1)
-		err(EXIT_FAILURE, "SSL_CTX_use_certificate_chain_file");
+		ndclog_err("SSL_CTX_use_certificate_chain_file");
 
 	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
 	if (!fp)
-		err(EXIT_FAILURE, "open dhparam.pem");
+		ndclog_err("open dhparam.pem");
 	DH *dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
 	if (!dh)
-		err(EXIT_FAILURE, "PEM_read_DHparams");
+		ndclog_err("PEM_read_DHparams");
 	SSL_CTX_set_tmp_dh(ssl_ctx, dh);
 
 	/* SSL_CTX_set_tlsext_servername_callback(ssl_ctx, ndc_sni); */
 	return ssl_ctx;
+}
+
+static int openssl_error_callback(const char *str, size_t len, void *u) {
+    (void)u;
+    ndclog(LOG_ERR, "%.*s", (int) len, str);
+    return 0;
 }
 
 void ndc_init(struct ndc_config *config_r) {
@@ -740,18 +774,18 @@ void ndc_init(struct ndc_config *config_r) {
 
 		SSL_CTX_set_tlsext_servername_callback(default_ssl_ctx, ndc_sni);
 
-		ERR_print_errors_fp(stderr);
+		ERR_print_errors_cb(openssl_error_callback, NULL);
 	}
 
 	if (!config.chroot)
-		fprintf(stderr, "Running from cwd\n");
+		ndclog(LOG_ERR, "Running from cwd");
 	else if (!geteuid()) {
 		if (chroot(config.chroot) != 0)
-			err(EXIT_FAILURE, "ndc_main chroot");
+			ndclog_err("ndc_main chroot");
 		if (chdir("/") != 0)
-			err(EXIT_FAILURE, "ndc_main chdir");
+			ndclog_err("ndc_main chdir");
 	} else if (chdir(config.chroot) != 0)
-		err(EXIT_FAILURE, "ndc_main chdir2");
+		ndclog_err("ndc_main chdir2");
 
 	cmds_init();
 	mime_hd = hash_init();
@@ -777,8 +811,10 @@ void ndc_init(struct ndc_config *config_r) {
 
 	ndc_bind(&srv_fd, 0);
 	
-	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
+	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0) {
+		ndclog = syslog;
 		exit(EXIT_SUCCESS);
+	}
 }
 
 int ndc_main() {
@@ -814,7 +850,7 @@ int ndc_main() {
 			case EBADF: continue;
 			}
 
-			perror("select");
+			ndclog_perror("select");
 			return -1;
 
 		case 0: continue;
@@ -833,42 +869,35 @@ static struct passwd *drop_priviledges(int fd) {
 	struct passwd *pw = getpwnam((d->flags & DF_AUTHENTICATED) ? d->username : "root");
 
 	if (!config.chroot) {
-		fprintf(stderr, "NOT CHROOTED\n");
+		ndclog(LOG_INFO, "NOT_CHROOTED");
 		return pw;
 	}
 	
 	if (!pw)
-		err(EXIT_FAILURE, "drop_priviledges getpwnam");
+		ndclog_err("drop_priviledges getpwnam");
 
 	uid_t new_uid = pw->pw_uid;
 	gid_t new_gid = pw->pw_gid;
 
 	if (setgroups(0, NULL) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setgroups");
+		ndclog_err("drop_priviledges setgroups");
 
 	if (initgroups(pw->pw_name, pw->pw_gid))
-		err(EXIT_FAILURE, "drop_priviledges initgroups");
+		ndclog_err("drop_priviledges initgroups");
 
 	if (setgid(new_gid) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setgid");
+		ndclog_err("drop_priviledges setgid");
 
 	if (setuid(new_uid) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setuid");
+		ndclog_err("drop_priviledges setuid");
 
-	if (setenv("HOME", pw->pw_dir, 1) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setenv HOME");
-
-	if (setenv("USER", pw->pw_name, 1) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setenv USER");
-
-	if (setenv("SHELL", pw->pw_shell, 1) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setenv SHELL");
-
-	if (setenv("PATH", "/bin:/usr/bin:/usr/local/bin", 1) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setenv PATH");
-
-	if (setenv("LD_LIBRARY_PATH", "/lib:/usr/lib:/usr/local/lib", 1) != 0)
-		err(EXIT_FAILURE, "drop_priviledges setenv LD_LIBRARY_PATH");
+	if (
+			setenv("HOME", pw->pw_dir, 1) != 0
+			|| setenv("USER", pw->pw_name, 1) != 0
+			|| setenv("SHELL", pw->pw_shell, 1) != 0
+			|| setenv("PATH", "/bin:/usr/bin:/usr/local/bin", 1) != 0
+			|| setenv("LD_LIBRARY_PATH", "/lib:/usr/lib:/usr/local/lib", 1) != 0)
+		ndclog_err("drop_priviledges setenv");
 
 	return pw;
 }
@@ -889,13 +918,11 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		do_cleanup = 0;
 
 		struct descr *d = &descr_map[cfd];
-		if (setsid() == -1) {
-			perror("setsid");
-			exit(EXIT_FAILURE);
-		}
+		if (setsid() == -1)
+			ndclog_err("setsid");
 
 		if (!(d->flags & DF_AUTHENTICATED))
-			err(EXIT_FAILURE, "NOT AUTHENTICATED");
+			ndclog_err("NOT AUTHENTICATED");
 
 		int slave_fd = open(ptsname(d->pty), O_RDWR);
 
@@ -907,30 +934,29 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		/* fprintf(stderr, "open pty %s\n", ptsname(d->pty)); */
 
 		if (slave_fd == -1)
-			err(EXIT_FAILURE, "command_pty open");
+			ndclog_err("command_pty open");
 
 		if (ioctl(slave_fd, TIOCSWINSZ, ws) == -1)
-			err(EXIT_FAILURE, "command_pty ioctl TIOCSWINSZ");
+			ndclog_err("command_pty ioctl TIOCSWINSZ");
 
 		if (ioctl(slave_fd, TIOCSCTTY, NULL) == -1)
-			err(EXIT_FAILURE, "command_pty ioctl TIOCSCTTY");
+			ndclog_err("command_pty ioctl TIOCSCTTY");
 
 		if (fcntl(slave_fd, F_SETFD, FD_CLOEXEC) == -1)
-			err(EXIT_FAILURE, "command_pty fcntl srv_fd F_SETFL FD_CLOEXEC");
+			ndclog_err("command_pty fcntl srv_fd F_SETFL FD_CLOEXEC");
 
 		if (
 				-1 == dup2(slave_fd, STDIN_FILENO)
 				|| -1 == dup2(slave_fd, STDOUT_FILENO)
 				|| -1 == dup2(slave_fd, STDERR_FILENO))
 
-			err(EXIT_FAILURE, "command_pty dup2");
+			ndclog_err("command_pty dup2");
 
 		char *alt_args[] = { pw->pw_shell, NULL };
 		char * const *real_args = args[0] ? args : alt_args;
 
 		execvp(real_args[0], real_args);
-		perror("execvp");
-		exit(99);
+		ndclog_err("execvp");
 	}
 
 	return p;
@@ -1007,8 +1033,7 @@ popen2(int cfd, int *in, int *out, char * const args[])
 		/* close(pipe_stderr[1]); */
 		/* dup2(pipe_stderr[1], 2); */
 		execvp(args[0], args);
-		perror("popen2: execvp");
-		exit(99);
+		ndclog_err("popen2: execvp");
 	}
 
 	*in = pipe_stdin[1];
@@ -1046,7 +1071,7 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 			continue;
 
 		if (ready_fds == -1) {
-			perror("Error in select");
+			ndclog_perror("Error in select");
 			break;
 		}
 
@@ -1067,7 +1092,7 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 			case EAGAIN:
 				continue;
 			default:
-				perror("Error in read");
+				ndclog_perror("Error in read");
 				goto out;
 		}
 	} while (1);
@@ -1191,14 +1216,14 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 
 	int flags = fcntl(fd, F_GETFL, 0);
 	if (flags == -1) {
-		fprintf(stderr, "do_%s: fcntl F_GETFL\n", method);
+		ndclog(LOG_ERR, "do_%s: fcntl F_GETFL", method);
 		goto end;
 	}
 
 	flags |= O_SYNC;
 
 	if (fcntl(fd, F_SETFL, flags) == -1) {
-		fprintf(stderr, "do_%s: fcntl F_SETFL\n", method);
+		ndclog(LOG_ERR, "do_%s: fcntl F_SETFL", method);
 		goto end;
 	}
 
@@ -1338,7 +1363,7 @@ void ndc_set_flags(int fd, int flags) {
 
 void ndc_auth(int fd, char *username) {
 	struct descr *d = &descr_map[fd];
-	/* fprintf(stderr, "ndc_auth %d %s\n", fd, username); */
+	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
 }
@@ -1362,18 +1387,14 @@ void _ndc_cert_add(char *domain, char *crt, char *key) {
 void ndc_cert_add(char *optarg) {
 	char domain[BUFSIZ], crt[BUFSIZ], *ioc;
 	ioc = strchr(optarg, ':');
-	if (!ioc) {
-		fprintf(stderr, "Invalid cert info\n");
-		exit(EXIT_FAILURE);
-	}
+	if (!ioc)
+		ndclog_err("Invalid cert info");
 	*ioc = '\0';
 	strcpy(domain, optarg);
 	optarg = ioc + 1;
 	ioc = strchr(optarg, ':');
-	if (!ioc) {
-		fprintf(stderr, "Invalid cert info\n");
-		exit(EXIT_FAILURE);
-	}
+	if (!ioc)
+		ndclog_err("Invalid cert info");
 	*ioc = '\0';
 	strcpy(crt, optarg);
 	_ndc_cert_add(strdup(domain), strdup(crt), strdup(ioc + 1));
@@ -1383,25 +1404,21 @@ void ndc_cert_add(char *optarg) {
 void ndc_certs_add(char *certs_file) {
 	int fd = open(certs_file, O_RDONLY);
 
-	if (fd < 0) {
-		perror("ndc_certs_add: Failed to open file");
-		exit(EXIT_FAILURE);
-	}
+	if (fd < 0)
+		ndclog_err("ndc_certs_add: Failed to open file");
 
 	struct stat sb;
 	if (fstat(fd, &sb) == -1) {
-		perror("ndc_certs_add: Failed to get file size");
 		close(fd);
-		exit(EXIT_FAILURE);
+		ndclog_err("ndc_certs_add: Failed to get file size");
 	}
 
 	size_t file_size = sb.st_size;
 
 	char *mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 	if (mapped == MAP_FAILED) {
-		perror("ndc_certs_add: Failed to mmap file");
 		close(fd);
-		exit(EXIT_FAILURE);
+		ndclog_err("ndc_certs_add: Failed to mmap file");
 	}
 
 	close(fd);
@@ -1422,8 +1439,6 @@ void ndc_certs_add(char *certs_file) {
 		start = line_end + 1;
 	}
 
-	if (munmap(mapped, file_size) == -1) {
-		perror("ndc_certs_add: Failed to munmap file");
-		exit(EXIT_FAILURE);
-	}
+	if (munmap(mapped, file_size) == -1)
+		ndclog_err("ndc_certs_add: Failed to munmap file");
 }

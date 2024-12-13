@@ -64,7 +64,7 @@ usage(char *prog) {
 	fprintf(stderr, "        -k PATH   specify SSL certificate 'key' file\n");
 	fprintf(stderr, "        -c PATH   specify SSL certificate 'crt' file\n");
 	fprintf(stderr, "        -p PORT   specify server port\n");
-	fprintf(stderr, "        -d        daemon mode\n");
+	fprintf(stderr, "        -d        don't detach\n");
 	fprintf(stderr, "        -r        root multiplex mode\n");
 	fprintf(stderr, "        -?        display this message.\n");
 }
@@ -74,7 +74,7 @@ main(int argc, char *argv[])
 {
 	char domain[BUFSIZ], crt[BUFSIZ], *ioc;
 	struct ndc_config config = {
-		.flags = 0,
+		.flags = NDC_DETACH,
 	};
 	register char c;
 
@@ -83,7 +83,7 @@ main(int argc, char *argv[])
 	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) {
 		switch (c) {
 		case 'd':
-			config.flags |= NDC_DETACH;
+			config.flags &= ~NDC_DETACH;
 			break;
 
 		case 'K':
