@@ -92,18 +92,17 @@ SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
 
-typedef void (*log_t)(int type, const char *fmt, ...);
-
 static void
 ndc_logger_stderr(int type, const char *fmt, ...)
 {
         va_list va;
         va_start(va, fmt);
         int ret = vfprintf(stderr, fmt, va);
+	fputc('\n', stderr);
         va_end(va);
 }
 
-log_t ndclog = ndc_logger_stderr;
+ndc_log_t ndclog = ndc_logger_stderr;
 
 static inline void ndclog_perror(char *str) {
         ndclog(LOG_ERR, "%s: %s", str, strerror(errno));
@@ -113,11 +112,6 @@ static inline void ndclog_err(char *str) {
         ndclog_perror(str);
         exit(EXIT_FAILURE);
 }
-
-void hash_set_logger(log_t logger) {
-        ndclog = logger;
-}
-
 
 void
 ndc_close(int fd)
@@ -985,7 +979,9 @@ do_sh(int fd, int argc, char *argv[])
 static inline unsigned
 headers_get(size_t *body_start, char *next_lines)
 {
+	void *prenv = hash_env_pop();
 	unsigned req_hd = hash_init();
+	hash_env_set(prenv);
 	register char *s, *key, *value;
 
 	for (s = next_lines, key = s, value = s; *s; ) switch (*s) {

@@ -1,8 +1,12 @@
 #ifndef NDC_H
 #define NDC_H
+#include <errno.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
+#include <syslog.h>
 
 enum descr_flags {
 	DF_CONNECTED = 1,
@@ -41,6 +45,8 @@ enum cmd_flags {
 	CF_NOTRIM = 2,
 };
 
+typedef void (*ndc_log_t)(int type, const char *fmt, ...);
+
 extern long long ndc_tick;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
@@ -74,5 +80,7 @@ int ndc_headers(int fd);
 void ndc_pre_init();
 void ndc_cert_add(char *str);
 void ndc_certs_add(char *fname);
+
+extern ndc_log_t ndclog;
 
 #endif
