@@ -146,7 +146,7 @@ ndc_close(int fd)
 		d->cSSL = NULL;
 	}
 	if (d->headers)
-		hash_close(d->headers);
+		hash_close(d->headers, 0);
 	shutdown(fd, 2);
 	close(fd);
 	FD_CLR(fd, &fds_active);
@@ -244,7 +244,7 @@ static ssize_t
 ndc_ssl_lower_write(int fd, void *from, size_t len)
 {
 	struct descr *d = &descr_map[fd];
-	return SSL_write(descr_map[fd].cSSL, from, len);
+	return SSL_write(d->cSSL, from, len);
 }
 
 static int
