@@ -51,18 +51,18 @@ window.onload = function () {
 
 In your index.html head, add:
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.1.0/css/xterm.css" />
+<link href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" rel="stylesheet">
 ```
 
 # Use js library without npm
 In your html:
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.1.0/css/xterm.css" />
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.1.0/lib/xterm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tty-pt/ndc@0.0.9/htdocs/ndc.css" />
-<script src="https://cdn.jsdelivr.net/npm/@tty-pt/ndc@0.0.9/htdocs/ndc.umd.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tty-pt/ndc@latest/htdocs/ndc.css" />
+<script src="https://cdn.jsdelivr.net/npm/@tty-pt/ndc@latest/htdocs/ndc.js"></script>
 <script async defer>
 	window.NDC.connect("ws", 4201);
 	window.NDC.open(document.getElementById("term"));
