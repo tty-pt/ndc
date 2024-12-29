@@ -7,9 +7,10 @@ LIBDIR := $(DESTDIR)${PREFIX}/lib
 .PHONY:  all install install-bin uninstall clean
 .SUFFIXES: .so .c .o
 
-node_modules != realpath ../..
+npm-root != npm root
+npm-root-dir != dirname ${npm-root}
 npm-lib := @tty-pt/qhash
-npm-lib := ${npm-lib:%=${node_modules}/%}
+npm-lib := ${npm-lib:%=${npm-root}/%} ${npm-lib:%=${npm-root-dir}/../../%}
 RELDIR := .
 CFLAGS := -g -fPIC -Iinclude -I/usr/local/include ${npm-lib:%=-I%/include}
 uname != uname
