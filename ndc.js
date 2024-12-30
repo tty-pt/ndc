@@ -1,4 +1,4 @@
-// import Terminal from "xterm";
+// import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "./ndc.css";
@@ -110,57 +110,47 @@ function open(parent) {
   term.element.addEventListener("focusout", () => {
     term.focused = false;
   });
-  if (isMobile) {
-    term.element.addEventListener("input", function (event) {
-      switch (event.inputType) {
-        case "deleteContentBackward":
-          term.inputBuf = term.inputBuf.slice(0, term.inputBuf.length - 2);
-          return true;
-        case "deleteContentForward":
-        case "deleteByCut":
-          return true;
-      }
-      if (event.data !== " ")
-        term.inputBuf = event.data;
-      else
-        term.perm = term.inputBuf;
-      term.lastInput = true;
-      return true;
-    });
-  }
-  term.onKey(event => {
-    console.log("term.onKey", event, event.key);
-    if (raw)
-      sendMessage(event.key === "\r" ? "\r\n" : event.key);
-    else if (event.key === "\r" || event.key === "\n") {
-      if (isMobile) {
-        const msg = (term.perm ? term.perm + " " : "") + term.inputBuf;
-        term.write(msg + "\n");
-        sendMessage(msg);
-        term.perm = "";
-      } else {
-        if (will_echo)
-          term.write("\b \b".repeat(term.inputBuf.length));
-        else
-          term.write("\n");
-        ws.send(term.inputBuf + "\r\n");
-        term.inputBuf = "";
-      }
-      term.inputBuf = "";
-    } else if (event.key === "\u007f") {
-      if (raw)
-        sendMessage(event.key);
-      else {
-        term.write("\b \b");
-        term.inputBuf = term.inputBuf.length > 0 ? term.inputBuf.slice(0, term.inputBuf.length - 1) : "";
+
+    term.inputBuf = ""; // Initialize input buffer
+  
+  term.onData(data => {
+    if (isMobile) {
+      switch (data) {
+        case "\r": // Enter key
+          const msg = term.inputBuf;
+          term.write("\n"); // Add a newline visually
+          sendMessage(msg); // Send the message
+          term.inputBuf = ""; // Clear the buffer
+          break;
+
+        case "\u007F": // Backspace
+          if (term.inputBuf.length > 0) {
+            term.inputBuf = term.inputBuf.slice(0, -1); // Remove last character
+            term.write("\b \b"); // Visually erase the character
+          }
+          break;
+
+        default:
+          term.inputBuf += data; // Append character to buffer
+          term.write(data); // Echo the character to the terminal
+          break;
       }
     } else {
-      term.inputBuf += event.key;
-      if (will_echo)
-        term.write(event.key);
-      return;
+      // Desktop handling (similar logic, but could diverge if needed)
+      if (data === "\r") {
+        sendMessage(term.inputBuf);
+        term.write("\n"); // Add a newline visually
+        term.inputBuf = ""; // Clear the buffer
+      } else if (data === "\u007F") {
+        if (term.inputBuf.length > 0) {
+          term.inputBuf = term.inputBuf.slice(0, -1); // Remove last character
+          term.write("\b \b"); // Erase visually
+        }
+      } else {
+        term.inputBuf += data; // Append character to buffer
+        term.write(data); // Echo the input
+      }
     }
-    term.lastInput = false;
   });
   return term;
 }

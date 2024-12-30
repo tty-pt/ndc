@@ -7,23 +7,27 @@ LIBDIR := $(DESTDIR)${PREFIX}/lib
 .PHONY:  all install install-bin uninstall clean
 .SUFFIXES: .so .c .o
 
+npm-lib := @tty-pt/qhash
 npm-root != npm root
 npm-root-dir != dirname ${npm-root}
-npm-lib := @tty-pt/qhash
-npm-lib := ${npm-lib:%=${npm-root}/%} ${npm-lib:%=${npm-root-dir}/../../%}
+pwd != pwd
+libdir := /usr/local/lib ${pwd} ${npm-lib:%=${npm-root}/%} \
+	  ${npm-lib:%=${npm-root-dir}/../../%}
 RELDIR := .
 CFLAGS := -g -fPIC -Iinclude -I/usr/local/include ${npm-lib:%=-I%/include}
 uname != uname
 ldflags-Linux := -lrt
-LDFLAGS := -lc -lndc -lqhash -ldb -lcrypto -lssl ${ldflags-${uname}}
-LDFLAGS += -L. -L/usr/local/lib ${npm-lib:%=-Wl,-rpath,%}
+LDFLAGS := -lc -lqhash -ldb -lcrypto -lssl ${ldflags-${uname}}
+LDFLAGS	+= ${libdir:%=-L%} ${libdir:%=-Wl,-rpath,%}
 LD := ${CC}
 
 libndc.so: src/io.o src/ws.o
-	${LD} -o $@ src/io.o src/ws.o -fPIC -shared
+	${LD} -o $@ src/io.o src/ws.o -fPIC -shared ${LDFLAGS}
+
+bin: ndc
 
 ndc: src/ndc.o
-	${LD} src/ndc.o -o $@ ${LDFLAGS}
+	${LD} src/ndc.o -o $@ -lndc ${LDFLAGS}
 
 .c.o:
 	${COMPILE.c} -o ${@:%=${RELDIR}/%} ${<:%=${RELDIR}/%}
