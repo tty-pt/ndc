@@ -16,7 +16,7 @@ CFLAGS := -g -fPIC -Iinclude -I/usr/local/include ${npm-lib:%=-I%/include}
 uname != uname
 ldflags-Linux := -lrt
 LDFLAGS := -lc -lndc -lqhash -ldb -lcrypto -lssl ${ldflags-${uname}}
-LDFLAGS += -L. -L/usr/local/lib ${npm-lib:%=-Wl,-rpath,%}
+LDFLAGS += -L. -L/usr/local/lib -Wl,-rpath,/usr/local/lib ${npm-lib:%=-Wl,-rpath,%}
 LD := ${CC}
 
 libndc.so: src/io.o src/ws.o
