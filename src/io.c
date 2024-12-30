@@ -735,17 +735,10 @@ SSL_CTX *ndc_ctx_new(char *crt, char *key) {
 	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
 	if (!fp)
 		ndclog_err("open dhparam.pem");
-
-	EVP_PKEY *dh_pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
-	fclose(fp);
-
-	if (!dh_pkey)
-		ndclog_err("Failed to read DH parameters");
-
-	if (SSL_CTX_set0_tmp_dh_pkey(ssl_ctx, dh_pkey) != 1) {
-		EVP_PKEY_free(dh_pkey);
-		ndclog_err("Failed to set DH parameters in SSL context");
-	}
+	DH *dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
+	if (!dh)
+		ndclog_err("PEM_read_DHparams");
+	SSL_CTX_set_tmp_dh(ssl_ctx, dh);
 
 	/* SSL_CTX_set_tlsext_servername_callback(ssl_ctx, ndc_sni); */
 	return ssl_ctx;
@@ -759,7 +752,7 @@ static int openssl_error_callback(const char *str, size_t len, void *u) {
 
 void ndc_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
-	ndc_srv_flags = config.flags | NDC_WAKE;
+	ndc_srv_flags |= config.flags | NDC_WAKE;
 
 	if (ndc_srv_flags & NDC_SSL) {
 
@@ -1300,6 +1293,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 
 		content_type = "application/octet-stream";
 		if (ext) {
+			memset(buf, 0, sizeof(buf));
 			if (!shash_get(mime_hd, buf, ext))
 				content_type = buf;
 		}
