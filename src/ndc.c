@@ -87,12 +87,10 @@ main(int argc, char *argv[])
 			break;
 
 		case 'K':
-			config.flags |= NDC_SSL;
 			ndc_certs_add(optarg);
 			break;
 
 		case 'k':
-			config.flags |= NDC_SSL;
 			ndc_cert_add(optarg);
 			break;
 			
