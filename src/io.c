@@ -735,17 +735,10 @@ SSL_CTX *ndc_ctx_new(char *crt, char *key) {
 	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
 	if (!fp)
 		ndclog_err("open dhparam.pem");
-
-	EVP_PKEY *dh_pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
-	fclose(fp);
-
-	if (!dh_pkey)
-		ndclog_err("Failed to read DH parameters");
-
-	if (SSL_CTX_set0_tmp_dh_pkey(ssl_ctx, dh_pkey) != 1) {
-		EVP_PKEY_free(dh_pkey);
-		ndclog_err("Failed to set DH parameters in SSL context");
-	}
+	DH *dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
+	if (!dh)
+		ndclog_err("PEM_read_DHparams");
+	SSL_CTX_set_tmp_dh(ssl_ctx, dh);
 
 	/* SSL_CTX_set_tlsext_servername_callback(ssl_ctx, ndc_sni); */
 	return ssl_ctx;
