@@ -735,10 +735,17 @@ SSL_CTX *ndc_ctx_new(char *crt, char *key) {
 	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
 	if (!fp)
 		ndclog_err("open dhparam.pem");
-	DH *dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
-	if (!dh)
-		ndclog_err("PEM_read_DHparams");
-	SSL_CTX_set_tmp_dh(ssl_ctx, dh);
+
+	EVP_PKEY *dh_pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+	fclose(fp);
+
+	if (!dh_pkey)
+		ndclog_err("Failed to read DH parameters");
+
+	if (SSL_CTX_set0_tmp_dh_pkey(ssl_ctx, dh_pkey) != 1) {
+		EVP_PKEY_free(dh_pkey);
+		ndclog_err("Failed to set DH parameters in SSL context");
+	}
 
 	/* SSL_CTX_set_tlsext_servername_callback(ssl_ctx, ndc_sni); */
 	return ssl_ctx;
@@ -800,7 +807,7 @@ void ndc_init(struct ndc_config *config_r) {
 
 	input = malloc(input_size);
 
-	if (config.flags & NDC_SSL)
+	if (ndc_srv_flags & NDC_SSL)
 		ndc_bind(&srv_ssl_fd, 1);
 
 	ndc_bind(&srv_fd, 0);
@@ -1191,9 +1198,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	ndc_auth_try(fd);
 	d->flags |= DF_TO_CLOSE;
 
-	if (config.flags & NDC_SSL && !d->cSSL) {
+	if (ndc_srv_flags & NDC_SSL && !d->cSSL) {
 		shash_get(d->headers, buf, "Host");
-		char response[1024];
+		char response[8285];
 		snprintf(response, sizeof(response),
 				"HTTP/1.1 301 Moved Permanently\r\n"
 				"Location: https://%s/%s\r\n"
@@ -1394,6 +1401,7 @@ void ndc_cert_add(char *optarg) {
 	*ioc = '\0';
 	strcpy(crt, optarg);
 	_ndc_cert_add(strdup(domain), strdup(crt), strdup(ioc + 1));
+	ndc_srv_flags |= NDC_SSL;
 }
 
 
@@ -1410,6 +1418,10 @@ void ndc_certs_add(char *certs_file) {
 	}
 
 	size_t file_size = sb.st_size;
+	if (!file_size) {
+		close(fd);
+		return;
+	}
 
 	char *mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 	if (mapped == MAP_FAILED) {
