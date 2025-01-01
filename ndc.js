@@ -110,52 +110,34 @@ function open(parent) {
   term.element.addEventListener("focusout", () => {
     term.focused = false;
   });
-
-    term.inputBuf = ""; // Initialize input buffer
-  
   term.onData(data => {
-    if (isMobile) {
-      switch (data) {
-        case "\r": // Enter key
-          const msg = term.inputBuf;
-          term.write("\n"); // Add a newline visually
-          sendMessage(msg); // Send the message
-          term.inputBuf = ""; // Clear the buffer
-          break;
-
-        case "\u007F": // Backspace
-          if (term.inputBuf.length > 0) {
-            term.inputBuf = term.inputBuf.slice(0, -1); // Remove last character
-            term.write("\b \b"); // Visually erase the character
-          }
-          break;
-
-        default:
-          term.inputBuf += data; // Append character to buffer
-          term.write(data); // Echo the character to the terminal
-          break;
+    console.log("term.onData", data, data.charAt(0), raw, will_echo);
+    if (raw)
+      sendMessage(data === "\r" ? "\r\n" : data);
+    else if (data === "\r" || data === "\n") {
+      if (will_echo)
+        term.write("\b \b".repeat(term.inputBuf.length));
+      else
+        term.write("\n");
+      ws.send(term.inputBuf + "\r\n");
+      term.inputBuf = "";
+    } else if (data === "\u007f") {
+      if (raw)
+        sendMessage(data);
+      else {
+        term.write("\b \b");
+        term.inputBuf = term.inputBuf.length > 0 ? term.inputBuf.slice(0, term.inputBuf.length - 1) : "";
       }
     } else {
-      // Desktop handling (similar logic, but could diverge if needed)
-      if (data === "\r") {
-        sendMessage(term.inputBuf);
-        term.write("\n"); // Add a newline visually
-        term.inputBuf = ""; // Clear the buffer
-      } else if (data === "\u007F") {
-        if (term.inputBuf.length > 0) {
-          term.inputBuf = term.inputBuf.slice(0, -1); // Remove last character
-          term.write("\b \b"); // Erase visually
-        }
-      } else {
-        term.inputBuf += data; // Append character to buffer
-        term.write(data); // Echo the input
-      }
+      term.inputBuf += data;
+      if (will_echo)
+        term.write(data);
+      return;
     }
+    term.lastInput = false;
   });
   return term;
 }
-
-const isMobile = window.navigator.maxTouchPoints > 1;
 
 function sendMessage(text) {
   ws.send(text);
