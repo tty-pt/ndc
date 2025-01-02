@@ -70,7 +70,7 @@ const term = new globalThis.Terminal({
   fontFamily: 'Consolas,Liberation Mono,Menlo,Courier,monospace',
   theme: {
     foreground: '#93ada5',
-    background: 'rgba(0, 0, 0, 0.2)',
+    background: 'rgba(0, 0, 0, 0.5)',
     cursor: '#73fa91',
     black: '#112616',
     red: '#7f2b27',
