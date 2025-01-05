@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <qhash.h>
+
+DB_TXN *txnid;
 
 struct cmd_slot cmds[] = {
 	{
