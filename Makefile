@@ -14,7 +14,8 @@ pwd != pwd
 libdir := /usr/local/lib ${pwd} ${npm-lib:%=${npm-root}/%} \
 	  ${npm-lib:%=${npm-root-dir}/../../%}
 RELDIR := .
-CFLAGS := -g -fPIC -Iinclude -I/usr/local/include ${npm-lib:%=-I%/include}
+CFLAGS := -g -fPIC -Iinclude -I/usr/local/include ${npm-lib:%=-I%/include} \
+	  -Wall -Wextra -Wpedantic
 uname != uname
 ldflags-Linux := -lrt
 LDFLAGS := -lc -lqhash -ldb -lcrypto -lssl ${ldflags-${uname}}

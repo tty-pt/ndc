@@ -51,7 +51,7 @@ extern long long ndc_tick;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
 void ndc_init(struct ndc_config *);
-int ndc_main();
+int ndc_main(void);
 
 /* define these */
 extern void ndc_update(unsigned long long dt);
@@ -77,7 +77,7 @@ void ndc_set_flags(int fd, int flags);
 char *ndc_auth_check(int fd);
 void ndc_auth(int fd, char *username);
 int ndc_headers(int fd);
-void ndc_pre_init();
+void ndc_pre_init(void);
 void ndc_cert_add(char *str);
 void ndc_certs_add(char *fname);
 

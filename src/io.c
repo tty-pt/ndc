@@ -63,7 +63,7 @@ struct descr {
 	struct winsize wsz;
 	struct termios tty;
 	unsigned headers;
-	void *remaining;
+	char *remaining;
 	size_t remaining_size, remaining_len;
 } descr_map[FD_SETSIZE];
 
@@ -86,7 +86,6 @@ struct ndc_config config;
 static int ndc_srv_flags = 0, srv_ssl_fd = -1, srv_fd = -1;
 static unsigned cmds_hd, mime_hd;
 static fd_set fds_read, fds_active;
-static size_t cmds_len = 0;
 long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
@@ -97,7 +96,7 @@ ndc_logger_stderr(int type, const char *fmt, ...)
 {
         va_list va;
         va_start(va, fmt);
-        int ret = vfprintf(stderr, fmt, va);
+        vfprintf(stderr, fmt, va);
 	fputc('\n', stderr);
         va_end(va);
 }
@@ -155,7 +154,7 @@ ndc_close(int fd)
 	memset(d, 0, sizeof(struct descr));
 }
 
-static void cleanup()
+static void cleanup(void)
 {
 	if (!do_cleanup)
 		return;
@@ -208,7 +207,6 @@ ndc_ssl_low_read(int fd, void *to, size_t len)
 static void
 cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
 {
-	struct cmd cmd;
 	register char *p = input;
 	int argc = 0;
 
@@ -347,7 +345,7 @@ ndc_read(int fd)
 	char buf[BUFSIZ];
 	struct io *dio = &io[fd];
 	input_len = 0;
-	int ret;
+	size_t ret;
 
 	while (1) switch ((ret = dio->read(fd, buf, sizeof(buf)))) {
 	case -1:
@@ -543,7 +541,7 @@ descr_read(int fd)
 
 	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, input); */
 
-	int i = 0, li = 0;
+	int i = 0;
 
 	for (; i < ret && input[i] != IAC; i++);
 
@@ -592,7 +590,6 @@ pty_read(int fd)
 {
 	struct descr *d = &descr_map[fd];
 	static char buf[BUFSIZ * 4];
-	char pbuf[1];
 
 	errno = 0;
 	if (waitpid(d->pid, NULL, WNOHANG)) {
@@ -625,7 +622,7 @@ close:	if (d->pid > 0)
 	d->pid = -1;
 }
 
-static inline void descr_proc() {
+static inline void descr_proc(void) {
 	for (register int i = 0; i < FD_SETSIZE; i++)
 		if (descr_map[i].remaining_len)
 			ndc_write_remaining(i);
@@ -644,7 +641,7 @@ static inline void descr_proc() {
 }
 
 static void
-cmds_init() {
+cmds_init(void) {
 	unsigned i;
 
 	cmds_hd = hash_init();
@@ -653,7 +650,7 @@ cmds_init() {
 		shash_put(cmds_hd, cmds[i].name, &i, sizeof(i));
 }
 
-static long long timestamp() {
+static long long timestamp(void) {
 	struct timeval te;
 	gettimeofday(&te, NULL); // get current time
 	return te.tv_sec * 1000000LL + te.tv_usec;
@@ -740,7 +737,6 @@ SSL_CTX *ndc_ctx_new(char *crt, char *key) {
 		ndclog_err("PEM_read_DHparams");
 	SSL_CTX_set_tmp_dh(ssl_ctx, dh);
 
-	/* SSL_CTX_set_tlsext_servername_callback(ssl_ctx, ndc_sni); */
 	return ssl_ctx;
 }
 
@@ -811,7 +807,7 @@ void ndc_init(struct ndc_config *config_r) {
 	}
 }
 
-int ndc_main() {
+int ndc_main(void) {
 	struct timeval timeout;
 
 	ndc_tick = timestamp();
@@ -900,7 +896,6 @@ inline static int
 command_pty(int cfd, struct winsize *ws, char * const args[])
 {
 	struct descr *d = &descr_map[cfd];
-	struct termios tty = d->tty;
 	pid_t p;
 
 	/* fprintf(stderr, "command_pty WILL EXEC %s\n", args[0]); */
@@ -971,7 +966,6 @@ void ndc_pty(int fd, char * const args[]) {
 void
 do_sh(int fd, int argc, char *argv[])
 {
-	uid_t uid = getuid();
 	char *args[] = { NULL, NULL };
 	ndc_pty(fd, args);
 }
@@ -1020,14 +1014,11 @@ popen2(int cfd, int *in, int *out, char * const args[])
 		return p;
 
 	if(p == 0) { /* child */
-		struct passwd *pw = drop_priviledges(cfd);
 		do_cleanup = 0;
 		close(pipe_stdin[1]);
 		dup2(pipe_stdin[0], 0);
 		close(pipe_stdout[0]);
 		dup2(pipe_stdout[1], 1);
-		/* close(pipe_stderr[1]); */
-		/* dup2(pipe_stderr[1], 2); */
 		execvp(args[0], args);
 		ndclog_err("popen2: execvp");
 	}
@@ -1042,9 +1033,8 @@ popen2(int cfd, int *in, int *out, char * const args[])
 static inline int
 ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t input_len) {
 	static char buf[BUFSIZ * 64];
-	ssize_t len = 0, total = 0;
-	int start = 1, cont = 0;
-	int in, out, pid, ret = -1;
+	ssize_t len = 0;
+	int in, out, pid;
 
 	pid = popen2(cfd, &in, &out, args); // should assert it equals 0
 	callback(cfd, "", -1, pid, in, out);
@@ -1079,10 +1069,8 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 		if (len > 0) {
 			buf[len] = '\0';
 			callback(cfd, buf, len, pid, in, out);
-			total += len;
 		} else if (len == 0) {
 			callback(cfd, "", 0, pid, in, out);
-			ret = 0;
 			break;
 		} else switch (errno) {
 			case EAGAIN:
@@ -1164,11 +1152,9 @@ static void ndc_auth_try(int fd) {
 
 static void request_handle(int fd, int argc, char *argv[], int post) {
 	char *method = post ? "POST" : "GET";
-	struct passwd *pw;
 	struct descr *d = &descr_map[fd];
 	size_t body_start;
 	d->headers = headers_get(&body_start, argv[argc]);
-	uid_t uid;
 	char buf[BUFSIZ];
 	if (!shash_get(d->headers, buf, "Sec-WebSocket-Key")) {
 		struct io *dio = &io[fd];
@@ -1224,7 +1210,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	}
 
 
-	static char * common = "HTTP/1.1 ", *content_type = "text/plain";
+	static char *content_type = "text/plain";
 	char *status = "200 OK";
 	struct stat stat_buf;
 	char filename[64], *alt = "../.index";
@@ -1251,7 +1237,6 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 		} else {
 			char * args[2] = { NULL, NULL };
 			char uribuf[BUFSIZ];
-			char * uri;
 			char * query_string = strchr(argv[1], '?');
 			char key[BUFSIZ], value[BUFSIZ];
 			struct hash_cursor c;
@@ -1365,7 +1350,7 @@ void ndc_auth(int fd, char *username) {
 	d->flags |= DF_AUTHENTICATED;
 }
 
-void ndc_pre_init() {
+void ndc_pre_init(void) {
 	ssl_certs = lhash_init(sizeof(char*));
 	ssl_keys = hash_init();
 	ssl_contexts = hash_init();
