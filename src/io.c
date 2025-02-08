@@ -92,7 +92,7 @@ long long ndc_tick;
 int do_cleanup = 1;
 
 static void
-ndc_logger_stderr(int type, const char *fmt, ...)
+ndc_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
 {
         va_list va;
         va_start(va, fmt);
@@ -163,7 +163,7 @@ static void cleanup(void)
 		ndc_close(di_i);
 }
 
-void sig_shutdown(int i)
+void sig_shutdown(int i __attribute__((unused)))
 {
 	ndc_srv_flags &= ~NDC_WAKE;
 }
@@ -205,7 +205,12 @@ ndc_ssl_low_read(int fd, void *to, size_t len)
 }
 
 static void
-cmd_new(int *argc_r, char *argv[CMD_ARGM], int fd, char *input, size_t len)
+cmd_new(
+		int *argc_r,
+		char *argv[CMD_ARGM],
+		int fd __attribute__((unused)),
+		char *input,
+		size_t len )
 {
 	register char *p = input;
 	int argc = 0;
@@ -696,7 +701,10 @@ ndc_bind(int *srv_fd_r, int ssl) {
 	*srv_fd_r = srv_fd;
 }
 
-static int ndc_sni(SSL *ssl, int *ad, void *arg) {
+static int ndc_sni(
+		SSL *ssl,
+		int *ad __attribute__((unused)),
+		void *arg __attribute__((unused)) ) {
 	const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 
 	if (!servername)
@@ -964,7 +972,10 @@ void ndc_pty(int fd, char * const args[]) {
 }
 
 void
-do_sh(int fd, int argc, char *argv[])
+do_sh(
+		int fd,
+		int argc __attribute__((unused)),
+		char *argv[] __attribute__((unused)) )
 {
 	char *args[] = { NULL, NULL };
 	ndc_pty(fd, args);
@@ -1014,6 +1025,7 @@ popen2(int cfd, int *in, int *out, char * const args[])
 		return p;
 
 	if(p == 0) { /* child */
+		drop_priviledges(cfd);
 		do_cleanup = 0;
 		close(pipe_stdin[1]);
 		dup2(pipe_stdin[0], 0);
@@ -1088,7 +1100,13 @@ out:	close(in);
 	return 0;
 }
 
-void do_GET_cb(int fd, char *buf, ssize_t len, int pid, int in, int out) {
+void do_GET_cb(
+		int fd,
+		char *buf,
+		ssize_t len,
+		int pid __attribute__((unused)),
+		int in __attribute__((unused)),
+		int out __attribute__((unused)) ) {
 	if (len <= 0)
 		return;
 	ndc_write(fd, buf, len);
