@@ -415,20 +415,20 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	for (s = argv[0]; isalnum(*s); s++);
 
-	unsigned i;
-	struct cmd_slot *cmd_i = NULL;
+	struct cmd_slot cmd;
+	int found = 0;
 
 	*s = '\0';
-	if (!shash_get(cmds_hd, &i, argv[0]))
-		cmd_i = &cmds[i];
+	if (!shash_get(cmds_hd, &cmd, argv[0]))
+		found = 1;
 
 	struct descr *d = &descr_map[fd];
 
 	if (!(d->flags & DF_AUTHENTICATED)
-			&& (!cmd_i || !(cmd_i->flags & CF_NOAUTH)))
+			&& (!found || !(cmd.flags & CF_NOAUTH)))
 		return;
 
-	if ((!cmd_i && argc) || !(cmd_i->flags & CF_NOTRIM)) {
+	if ((!found && argc) || !(cmd.flags & CF_NOTRIM)) {
 		// this looks buggy let's fix it, please
 		/* fprintf(stderr, "??? %d %p, %d '%s'\n", argc, cmd_i, cmd_i - cmds_hd, argv[0]); */
 		char *p = &argv[argc][-2];
@@ -436,9 +436,9 @@ cmd_proc(int fd, int argc, char *argv[])
 		argv[argc] = "";
 	}
 
-	if (cmd_i) {
+	if (found) {
 		ndc_command(fd, argc, argv);
-		cmd_i->cb(fd, argc, argv);
+		cmd.cb(fd, argc, argv);
 	} else
 		ndc_vim(fd, argc, argv);
 }
@@ -645,16 +645,6 @@ static inline void descr_proc(void) {
 			ndc_close(i);
 }
 
-static void
-cmds_init(void) {
-	unsigned i;
-
-	cmds_hd = hash_init();
-
-	for (i = 0; cmds[i].name; i++)
-		shash_put(cmds_hd, cmds[i].name, &i, sizeof(i));
-}
-
 static long long timestamp(void) {
 	struct timeval te;
 	gettimeofday(&te, NULL); // get current time
@@ -754,6 +744,11 @@ static int openssl_error_callback(const char *str, size_t len, void *u) {
     return 0;
 }
 
+void ndc_register(char *name, ndc_cb_t *cb, int flags) {
+	struct cmd_slot cmd = { .name = name, .cb = cb, .flags = flags };
+	shash_put(cmds_hd, name, &cmd, sizeof(cmd));
+}
+
 void ndc_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
 	ndc_srv_flags |= config.flags | NDC_WAKE;
@@ -785,8 +780,11 @@ void ndc_init(struct ndc_config *config_r) {
 	} else if (chdir(config.chroot) != 0)
 		ndclog_err("ndc_main chdir2");
 
-	cmds_init();
-	mime_hd = hash_init();
+	cmds_hd = hash_init(NULL);
+	for (unsigned i = 0; cmds[i].name; i++)
+		shash_put(cmds_hd, cmds[i].name, &cmds[i], sizeof(cmds[i]));
+
+	mime_hd = hash_init(NULL);
 	static char *mime_table[] = {
 		"html\0text/html",
 		"txt\0text/plain",
@@ -985,7 +983,7 @@ static inline unsigned
 headers_get(size_t *body_start, char *next_lines)
 {
 	void *prenv = hash_env_pop();
-	unsigned req_hd = hash_init();
+	unsigned req_hd = hash_init(NULL);
 	hash_env_set(prenv);
 	register char *s, *key, *value;
 
@@ -1369,10 +1367,10 @@ void ndc_auth(int fd, char *username) {
 }
 
 void ndc_pre_init(void) {
-	ssl_certs = lhash_init(sizeof(char*));
-	ssl_keys = hash_init();
-	ssl_contexts = hash_init();
-	ssl_domains = hash_init();
+	ssl_certs = lhash_init(sizeof(char*), NULL);
+	ssl_keys = hash_init(NULL);
+	ssl_contexts = hash_init(NULL);
+	ssl_domains = hash_init(NULL);
 }
 
 void _ndc_cert_add(char *domain, char *crt, char *key) {
