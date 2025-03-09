@@ -1193,6 +1193,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	ndc_auth_try(fd);
 	d->flags |= DF_TO_CLOSE;
 
+	/*
 	if (ndc_srv_flags & NDC_SSL && !d->cSSL) {
 		shash_get(d->headers, buf, "Host");
 		char response[8285];
@@ -1207,6 +1208,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			ndc_close(fd);
 		return;
 	}
+	*/
 
 	/* fprintf(stderr, "%d %s %s\n", fd, method, argv[1]); */
 
