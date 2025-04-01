@@ -9,12 +9,14 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fnmatch.h>
 #include <grp.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <pwd.h>
 #include <pwd.h>
+#include <qhash.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +33,6 @@
 #include <syslog.h>
 #include <termios.h>
 #include <unistd.h>
-#include <qhash.h>
 #include "../include/ws.h"
 
 #define CMD_ARGM 8
@@ -53,6 +54,8 @@ typedef void (*cmd_cb_t)(int cfd, char *buf, ssize_t len, int pid, int in, int o
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
 static unsigned ssl_certs, ssl_keys, ssl_domains, ssl_contexts;
+static char *statics_mmap;
+static size_t statics_len;
 
 struct io io[FD_SETSIZE];
 
@@ -749,6 +752,49 @@ void ndc_register(char *name, ndc_cb_t *cb, int flags) {
 	shash_put(cmds_hd, name, &cmd, sizeof(cmd));
 }
 
+inline static size_t ndc_mmap(char **mapped, char *file) {
+	int fd = open(file, O_RDONLY);
+
+	if (fd < 0)
+		ndclog_err("ndc_mmap: Failed to open file");
+
+	struct stat sb;
+	if (fstat(fd, &sb) == -1) {
+		close(fd);
+		ndclog_err("ndc_mmap: Failed to get file size");
+	}
+
+	size_t file_size = sb.st_size;
+	if (!file_size) {
+		close(fd);
+		return 0;
+	}
+
+	*mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	close(fd);
+
+	if (*mapped == MAP_FAILED) {
+		ndclog_err("ndc_mmap: Failed to mmap file");
+		return 0;
+	}
+
+	return file_size;
+}
+
+inline static char *ndc_mmap_iter(char *start, size_t *remaining) {
+	char *line_end = strchr(start, '\n');
+	if (!line_end)
+		return NULL;
+
+	/* char temp = *line_end; */
+	*line_end = '\0';
+	*remaining = line_end - start;
+	line_end ++;
+	if (*line_end == '\0')
+		return NULL;
+	return line_end;
+}
+
 void ndc_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
 	ndc_srv_flags |= config.flags | NDC_WAKE;
@@ -785,14 +831,11 @@ void ndc_init(struct ndc_config *config_r) {
 		shash_put(cmds_hd, cmds[i].name, &cmds[i], sizeof(cmds[i]));
 
 	mime_hd = hash_init(NULL);
-	static char *mime_table[] = {
-		"html\0text/html",
-		"txt\0text/plain",
-		"css\0text/css",
-		"js\0application/javascript",
-		NULL,
-	};
-	shash_table(mime_hd, mime_table);
+	sshash_put(mime_hd, "html", "text/html");
+	sshash_put(mime_hd, "txt", "text/plain");
+	sshash_put(mime_hd, "css", "text/css");
+	sshash_put(mime_hd, "js", "application/javascript");
+	statics_len = ndc_mmap(&statics_mmap, "./serve.allow");
 
 	atexit(cleanup);
 	signal(SIGTERM, sig_shutdown);
@@ -1166,6 +1209,33 @@ static void ndc_auth_try(int fd) {
 		ndc_auth(fd, user);
 }
 
+
+inline static char *static_allowed(const char *path) {
+	static char output[BUFSIZ];
+	char *cont = statics_mmap, *start;
+	size_t rem = statics_len;
+
+	do {
+		start = cont;
+		cont = ndc_mmap_iter(start, &rem);
+		char *glob = strchr(start, ' ');
+		if (!glob)
+			break;
+		if (fnmatch(glob + 1, path, 0) == 0) {
+			register char aux;
+			size_t offset = strchr(glob + 1, '*') - 1 - glob;
+			aux = *glob;
+			*glob = '\0';
+			size_t len = snprintf(output, sizeof(output), "../%s/%s", start, path + offset);
+			*glob = aux;
+			if (output[len - 1] != '/')
+				return output;
+		}
+	} while (cont);
+
+	return NULL;
+}
+
 static void request_handle(int fd, int argc, char *argv[], int post) {
 	char *method = post ? "POST" : "GET";
 	struct descr *d = &descr_map[fd];
@@ -1244,6 +1314,10 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 		snprintf(filename, 64, ".%s", argv[1]);
 
 	url_decode(filename);
+
+	char *statical = static_allowed(filename + 1);
+	if (statical)
+		strcpy(filename, statical);
 
 	if (!argv[1][1] || stat(filename, &stat_buf)) {
 		if (stat(alt, &stat_buf)) {
@@ -1403,46 +1477,15 @@ void ndc_cert_add(char *optarg) {
 
 
 void ndc_certs_add(char *certs_file) {
-	int fd = open(certs_file, O_RDONLY);
+	char *mapped;
+	size_t file_size = ndc_mmap(&mapped, certs_file);
 
-	if (fd < 0)
-		ndclog_err("ndc_certs_add: Failed to open file");
-
-	struct stat sb;
-	if (fstat(fd, &sb) == -1) {
-		close(fd);
-		ndclog_err("ndc_certs_add: Failed to get file size");
-	}
-
-	size_t file_size = sb.st_size;
-	if (!file_size) {
-		close(fd);
-		return;
-	}
-
-	char *mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-	if (mapped == MAP_FAILED) {
-		close(fd);
-		ndclog_err("ndc_certs_add: Failed to mmap file");
-	}
-
-	close(fd);
-
-	char *start = mapped;
-	char *end = mapped + file_size;
-	while (start < end) {
-		char *line_end = memchr(start, '\n', end - start);
-		if (!line_end) {
-			ndc_cert_add(start);
-			break;
-		}
-
-		char temp = *line_end;
-		*line_end = '\0';
+	char *start = mapped, *cont;
+	do {
+		cont = ndc_mmap_iter(start, &file_size);
 		ndc_cert_add(start);
-		*line_end = temp;
-		start = line_end + 1;
-	}
+		start = cont;
+	} while (start);
 
 	if (munmap(mapped, file_size) == -1)
 		ndclog_err("ndc_certs_add: Failed to munmap file");
