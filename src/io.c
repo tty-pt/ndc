@@ -1212,8 +1212,11 @@ static void ndc_auth_try(int fd) {
 
 inline static char *static_allowed(const char *path) {
 	static char output[BUFSIZ];
-	char *cont = statics_mmap, *start;
+	char *cont = statics_mmap, *start, *param = strchr(path, '?'), *out = NULL;
 	size_t rem = statics_len;
+
+	if (param)
+		*param = '\0';
 
 	do {
 		start = cont;
@@ -1222,18 +1225,28 @@ inline static char *static_allowed(const char *path) {
 		if (!glob)
 			break;
 		if (fnmatch(glob + 1, path, 0) == 0) {
-			register char aux;
-			size_t offset = strchr(glob + 1, '*') - 1 - glob;
+			register char aux = *glob,
+				 *aster = strchr(glob + 1, '*');
+
+			if (!aster)
+				ndclog_err("No asterisk on serve.allow\n");
+
+			size_t offset = aster - 1 - glob;
 			aux = *glob;
 			*glob = '\0';
 			size_t len = snprintf(output, sizeof(output), "../%s/%s", start, path + offset);
 			*glob = aux;
-			if (output[len - 1] != '/')
-				return output;
+			if (output[len - 1] != '/') {
+				out = output;
+				break;
+			}
 		}
 	} while (cont);
 
-	return NULL;
+	if (param)
+		*param = '?';
+
+	return out;
 }
 
 static void request_handle(int fd, int argc, char *argv[], int post) {
