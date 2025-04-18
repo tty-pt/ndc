@@ -794,8 +794,7 @@ inline static char *ndc_mmap_iter(char *start, size_t *remaining) {
 	return line_end;
 }
 
-void ndc_init(struct ndc_config *config_r) {
-	memcpy(&config, config_r, sizeof(config));
+void ndc_init(void) {
 	ndc_srv_flags |= config.flags | NDC_WAKE;
 
 	if (ndc_srv_flags & NDC_SSL) {
@@ -849,10 +848,8 @@ void ndc_init(struct ndc_config *config_r) {
 
 	ndc_bind(&srv_fd, 0);
 	
-	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0) {
-		ndclog = syslog;
+	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
 		exit(EXIT_SUCCESS);
-	}
 }
 
 int ndc_main(void) {
@@ -1478,7 +1475,10 @@ void ndc_auth(int fd, char *username) {
 	d->flags |= DF_AUTHENTICATED;
 }
 
-void ndc_pre_init(void) {
+void ndc_pre_init(struct ndc_config *config_r) {
+	memcpy(&config, config_r, sizeof(config));
+	if ((ndc_srv_flags & NDC_DETACH))
+		ndclog = syslog;
 	ssl_certs = lhash_init(sizeof(char*), NULL);
 	ssl_keys = hash_init(NULL);
 	ssl_contexts = hash_init(NULL);
