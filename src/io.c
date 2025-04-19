@@ -47,7 +47,7 @@
 	ndc_write(fd, command, sizeof(command)); \
 }
 
-typedef void (*cmd_cb_t)(int cfd, char *buf, ssize_t len, int pid, int in, int out);
+typedef ssize_t (*cmd_cb_t)(int cfd, int pfd, int pid, int in, int out);
 
 #define FIRST_INPUT_SIZE (BUFSIZ * 2)
 
@@ -1085,16 +1085,15 @@ popen2(int cfd, int *in, int *out, int *err, char * const args[])
 
 static inline int
 ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t input_len) {
-	static char buf[BUFSIZ * 64];
 	ssize_t len = 0, total = 0;
-	int in, out, err, pid;
+	int in, out, err, pid, pfd;
 
 	pid = popen2(cfd, &in, &out, &err, args); // should assert it equals 0
-	callback(cfd, "", -1, pid, in, out);
 
 	fd_set read_fds;
 	FD_ZERO(&read_fds);
 	FD_SET(out, &read_fds);
+	FD_SET(err, &read_fds);
 
 	int ready_fds;
 
@@ -1114,52 +1113,63 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 			break;
 		}
 
-		if (!FD_ISSET(out, &read_fds))
+		if (FD_ISSET(out, &read_fds))
+			pfd = out;
+		else if (FD_ISSET(err, &read_fds))
+			pfd = err;
+		else
 			continue;
 
-		total += len = read(out, buf, sizeof(buf));
+		len = callback(cfd, pfd, pid, in, out);
 
-		if (len > 0) {
-			buf[len] = '\0';
-			callback(cfd, buf, len, pid, in, out);
-		} else if (len == 0) {
-			callback(cfd, "", 0, pid, in, out);
-			break;
-		} else switch (errno) {
-			case EAGAIN:
-				continue;
-			default:
-				ndclog_perror("Error in read");
-				goto out;
-		}
-	} while (1);
+		if (len > 0)
+			total += len;
+	} while (len != 0);
 
-out:	close(in);
+	close(in);
 	close(out);
 	kill(pid, SIGKILL);
 	waitpid(pid, NULL, 0);
 
-	if (total != 0) {
-		char errbuf[BUFSIZ] = {0};
-		read(err, errbuf, sizeof(errbuf) - 1);
-		close(err);
-		ndclog(LOG_ERR, "%s\n", errbuf);
-		return 0;
-	}
-		
-	return err;
+	if (total == 0)
+		return err;
+
+	len = callback(cfd, err, pid, in, out);
+	close(err);
+	return 0;
 }
 
-void do_GET_cb(
+static char execbuf[BUFSIZ * 64];
+static unsigned get_finish = 0;
+
+ssize_t do_GET_cb(
 		int fd,
-		char *buf,
-		ssize_t len,
+		int pfd,
 		int pid __attribute__((unused)),
 		int in __attribute__((unused)),
-		int out __attribute__((unused)) ) {
-	if (len <= 0)
-		return;
-	ndc_write(fd, buf, len);
+		int out) {
+	*execbuf = '\0';
+	ssize_t len;
+again:
+	len = read(pfd, execbuf, sizeof(execbuf) - 1);
+	if (len > 0) {
+		execbuf[len] = '\0';
+		if (pfd == out) {
+			get_finish = 0;
+			ndc_write(fd, execbuf, len);
+			return len;
+		}
+		ndclog(LOG_ERR, "%s\n", execbuf);
+		if (get_finish)
+			goto again;
+		return -1;
+	} else if (len < 0) switch (errno) {
+		case EAGAIN: return -1;
+		default: ndclog_perror("Error in read");
+	}
+
+	// stop iteration if output receives 0
+	return pfd == out ? 0 : -1;
 }
 
 static char *env_name(char *key) {
@@ -1377,14 +1387,14 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			ndc_writef(fd, "HTTP/1.1 ");
 			int err;
 			if ((err = ndc_exec(fd, args, do_GET_cb, body, strlen(body)))) {
-				char errbuf[BUFSIZ] = {0};
-				read(err, errbuf, sizeof(errbuf) - 1);
+				read(err, execbuf, sizeof(execbuf) - 1);
 				close(err);
+				ndclog(LOG_ERR, "%s\n", execbuf);
 				ndc_writef(fd, "500 Internal Server Error\r\n"
 						"Content-Type: text/plain\r\n"
 						"Content-Length: %ld\r\n"
 						"\r\n"
-						"Code 500: Internal Server Error:\n%s\n", strlen(errbuf) + 37, errbuf);
+						"Code 500: Internal Server Error:\n%s\n", strlen(execbuf) + 37, execbuf);
 			}
 
 			c = hash_iter(d->headers, NULL, 0);
