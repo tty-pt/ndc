@@ -87,12 +87,10 @@ ws_init(int cfd, char *ws_key) {
 		"Upgrade: websocket\r\n"
 		"Connection: upgrade\r\n"
 		"Sec-Websocket-Protocol: binary\r\n"
-		"Sec-Websocket-Accept: 00000000000000000000000000000\r\n\r\n",
-		kkey[] = "Sec-WebSocket-Key";
+		"Sec-Websocket-Accept: 00000000000000000000000000000\r\n\r\n";
 	unsigned char hash[EVP_MAX_MD_SIZE];
 	EVP_MD_CTX *mdctx;
 	unsigned int hash_len;
-	SHA_CTX c;
 
 	mdctx = EVP_MD_CTX_new();
 	EVP_DigestInit_ex(mdctx, EVP_sha1(), NULL);
@@ -138,7 +136,7 @@ ws_write(int cfd, void *data, size_t n)
 	}
 
 	memcpy(frame + len, data, n);
-	return io[cfd].lower_write(cfd, frame, len + n) < len + n;
+	return io[cfd].lower_write(cfd, frame, len + n) < (ssize_t) (len + n);
 }
 
 void
@@ -151,11 +149,10 @@ ws_close(int cfd) {
 }
 
 ssize_t
-ws_read(int cfd, void *data, size_t len)
+ws_read(int cfd, void *data, size_t len __attribute__((unused)))
 {
 	struct ws_frame *frame = &frame_map[cfd];
-	uint64_t pl;
-	int i, n;
+	uint64_t pl = 0, n, i;
 
 	if (frame->pl)
 		goto mk;
@@ -169,7 +166,7 @@ ws_read(int cfd, void *data, size_t len)
 		return 0;
 	if (n != sizeof(frame->head)) {
 		if (errno != EAGAIN)
-			fprintf(stderr, "ws_read %d: bad frame head size: %d %d\n", cfd, n, errno);
+			fprintf(stderr, "ws_read %d: bad frame head size: %llu %d\n", cfd, n, errno);
 		goto error;
 	}
 

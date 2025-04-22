@@ -147,7 +147,7 @@ ndc_close(int fd)
 		d->cSSL = NULL;
 	}
 	if (d->headers)
-		hash_close(d->headers, 0);
+		qdb_close(d->headers, 0);
 	shutdown(fd, 2);
 	close(fd);
 	FD_CLR(fd, &fds_active);
@@ -421,7 +421,7 @@ cmd_proc(int fd, int argc, char *argv[])
 	int found = 0;
 
 	*s = '\0';
-	if (!shash_get(cmds_hd, &cmd, argv[0]))
+	if (!qdb_get(cmds_hd, &cmd, argv[0]))
 		found = 1;
 
 	struct descr *d = &descr_map[fd];
@@ -467,10 +467,12 @@ cmd_parse(int fd, char *cmd, size_t len) {
 	char *argv[CMD_ARGM];
 
 	cmd_new(&argc, argv, fd, cmd, len);
-	/* fprintf(stderr, "CMD_PARSE %d %lu: '", fd, len); */
-	/* for (int i = 0; i < argc; i++) */
-	/* 	fprintf(stderr, "%s", argv[i]); */
-	/* fprintf(stderr, "'\n"); */
+
+#if 0
+	fprintf(stderr, "CMD_PARSE %d %lu:\n", fd, len);
+	for (int i = 0; i < argc; i++)
+		fprintf(stderr, " A %s\n", argv[i]);
+#endif
 
 	if (!argc)
 		return 0;
@@ -705,10 +707,10 @@ static int ndc_sni(
 	unsigned cert_id;
 	SSL_CTX *ssl_ctx;
 
-	if (shash_get(ssl_domains, &cert_id, (char *) servername))
+	if (qdb_get(ssl_domains, &cert_id, (char *) servername))
 		return SSL_TLSEXT_ERR_NOACK;
 
-	uhash_get(ssl_contexts, &ssl_ctx, cert_id);
+	qdb_get(ssl_contexts, &ssl_ctx, &cert_id);
 	SSL_set_SSL_CTX(ssl, ssl_ctx);
 
 	return SSL_TLSEXT_ERR_OK;
@@ -748,7 +750,7 @@ static int openssl_error_callback(const char *str, size_t len, void *u) {
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags) {
 	struct cmd_slot cmd = { .name = name, .cb = cb, .flags = flags };
-	shash_put(cmds_hd, name, &cmd, sizeof(cmd));
+	qdb_put(cmds_hd, name, &cmd);
 }
 
 inline static size_t ndc_mmap(char **mapped, char *file) {
@@ -803,9 +805,10 @@ void ndc_init(void) {
 		SSL_library_init();
 		OpenSSL_add_all_algorithms();
 
-		char *crt, *key;
-		lhash_get(ssl_certs, &crt, 0);
-		uhash_get(ssl_keys, &key, 0);
+		char crt[BUFSIZ], key[BUFSIZ];
+		unsigned zero = 0;
+		qdb_get(ssl_certs, crt, &zero);
+		qdb_get(ssl_keys, key, &zero);
 
 		default_ssl_ctx = ndc_ctx_new(crt, key);
 
@@ -824,15 +827,19 @@ void ndc_init(void) {
 	} else if (chdir(config.chroot) != 0)
 		ndclog_err("ndc_main chdir2\n");
 
-	cmds_hd = hash_init(NULL);
-	for (unsigned i = 0; cmds[i].name; i++)
-		shash_put(cmds_hd, cmds[i].name, &cmds[i], sizeof(cmds[i]));
+	static qdb_type_t qdb_cmd = {
+		.len = sizeof(struct cmd_slot)
+	};
 
-	mime_hd = hash_init(NULL);
-	sshash_put(mime_hd, "html", "text/html");
-	sshash_put(mime_hd, "txt", "text/plain");
-	sshash_put(mime_hd, "css", "text/css");
-	sshash_put(mime_hd, "js", "application/javascript");
+	cmds_hd = qdb_init(NULL, &qdb_string, &qdb_cmd);
+	for (unsigned i = 0; cmds[i].name; i++)
+		qdb_put(cmds_hd, cmds[i].name, &cmds[i]);
+
+	mime_hd = qdb_init(NULL, &qdb_string, &qdb_string);
+	qdb_put(mime_hd, "html", "text/html");
+	qdb_put(mime_hd, "txt", "text/plain");
+	qdb_put(mime_hd, "css", "text/css");
+	qdb_put(mime_hd, "js", "application/javascript");
 	statics_len = ndc_mmap(&statics_mmap, "./serve.allow");
 
 	atexit(cleanup);
@@ -1021,9 +1028,9 @@ do_sh(
 static inline unsigned
 headers_get(size_t *body_start, char *next_lines)
 {
-	void *prenv = hash_env_pop();
-	unsigned req_hd = hash_init(NULL);
-	hash_env_set(prenv);
+	void *prenv = qdb_env_pop();
+	unsigned req_hd = qdb_init(NULL, &qdb_string, &qdb_string);
+	qdb_env_set(prenv);
 	register char *s, *key, *value;
 
 	for (s = next_lines, key = s, value = s; *s; ) switch (*s) {
@@ -1036,7 +1043,7 @@ headers_get(size_t *body_start, char *next_lines)
 			if (s != key) {
 				if (s - key >= BUFSIZ)
 					*(key + BUFSIZ - 1) = '\0';
-				sshash_put(req_hd, key, value);
+				qdb_put(req_hd, key, value);
 				key = s += 2;
 			} else
 				*++s = '\0';
@@ -1274,7 +1281,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	size_t body_start;
 	d->headers = headers_get(&body_start, argv[argc]);
 	char buf[BUFSIZ];
-	if (!shash_get(d->headers, buf, "Sec-WebSocket-Key")) {
+	if (!qdb_get(d->headers, buf, "Sec-WebSocket-Key")) {
 		struct io *dio = &io[fd];
 		if (ws_init(fd, buf))
 			return;
@@ -1297,7 +1304,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 
 	/*
 	if (ndc_srv_flags & NDC_SSL && !d->cSSL) {
-		shash_get(d->headers, buf, "Host");
+		qdb_get(d->headers, buf, "Host");
 		char response[8285];
 		snprintf(response, sizeof(response),
 				"HTTP/1.1 301 Moved Permanently\r\n"
@@ -1363,7 +1370,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			char uribuf[BUFSIZ];
 			char * query_string = strchr(argv[1], '?');
 			char key[BUFSIZ], value[BUFSIZ];
-			struct hash_cursor c;
+			qdb_cur_t c;
 			memcpy(uribuf, argv[1], sizeof(uribuf));
 			query_string = strchr(uribuf, '?');
 			if (query_string)
@@ -1371,11 +1378,11 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			else
 				query_string = "";
 			args[0] = alt + 1;
-			c = hash_iter(d->headers, NULL, 0);
-			while (hash_next(key, &value, &c))
+			c = qdb_iter(d->headers, NULL);
+			while (qdb_next(key, &value, &c))
 				setenv(env_name(key), value, 1);
 			char req_content_type[BUFSIZ];
-			if (shash_get(d->headers, req_content_type, "Content-Type"))
+			if (qdb_get(d->headers, req_content_type, "Content-Type"))
 				strncpy(req_content_type, "text/plain", sizeof(req_content_type));
 			setenv("CONTENT_TYPE", env_sane(req_content_type), 1);
 			setenv("DOCUMENT_URI", uribuf, 1);
@@ -1397,8 +1404,8 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 						"Code 500: Internal Server Error:\n%s\n", strlen(execbuf) + 37, execbuf);
 			}
 
-			c = hash_iter(d->headers, NULL, 0);
-			while (hash_next(key, &value, &c))
+			c = qdb_iter(d->headers, NULL);
+			while (qdb_next(key, &value, &c))
 				unsetenv(env_name(key));
 			if (!d->remaining_len)
 				ndc_close(fd);
@@ -1414,7 +1421,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 		content_type = "application/octet-stream";
 		if (ext) {
 			memset(buf, 0, sizeof(buf));
-			if (!shash_get(mime_hd, buf, ext))
+			if (!qdb_get(mime_hd, buf, ext))
 				content_type = buf;
 		}
 
@@ -1489,19 +1496,19 @@ void ndc_pre_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
 	if ((ndc_srv_flags & NDC_DETACH))
 		ndclog = syslog;
-	ssl_certs = lhash_init(sizeof(char*), NULL);
-	ssl_keys = hash_init(NULL);
-	ssl_contexts = hash_init(NULL);
-	ssl_domains = hash_init(NULL);
+	ssl_certs = qdb_linit(NULL, &qdb_string);
+	ssl_keys = qdb_init(NULL, &qdb_unsigned, &qdb_string);
+	ssl_contexts = qdb_init(NULL, &qdb_unsigned, &qdb_ptr);
+	ssl_domains = qdb_init(NULL, &qdb_string, &qdb_unsigned);
 }
 
 void _ndc_cert_add(char *domain, char *crt, char *key) {
 	SSL_CTX *ssl_ctx = ndc_ctx_new(crt, key);
 
-	unsigned id = lhash_new(ssl_certs, &crt);
-	uhash_put(ssl_keys, id, &key, sizeof(char *));
-	uhash_put(ssl_contexts, id, &ssl_ctx, sizeof(SSL_CTX *));
-	shash_put(ssl_domains, domain, &id, sizeof(id));
+	unsigned id = qdb_new(ssl_certs, crt);
+	qdb_put(ssl_keys, &id, key);
+	qdb_put(ssl_contexts, &id, &ssl_ctx);
+	qdb_put(ssl_domains, domain, &id);
 }
 
 void ndc_cert_add(char *optarg) {

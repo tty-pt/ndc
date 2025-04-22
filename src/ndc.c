@@ -26,35 +26,35 @@ struct cmd_slot cmds[] = {
 };
 
 void
-ndc_update(unsigned long long dt)
+ndc_update(unsigned long long dt __attribute__((unused)))
 {
 }
 
 void
-ndc_command(int fd, int argc, char *argv[])
+ndc_command(int fd __attribute__((unused)), int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 {
 }
 
 void
-ndc_vim(int fd, int argc, char *argv[])
+ndc_vim(int fd __attribute__((unused)), int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 {
 }
 
 int
-ndc_connect(int fd) {
+ndc_connect(int fd __attribute__((unused))) {
 	return 0;
 }
 
 void
-ndc_ws_init(int fd) {
+ndc_ws_init(int fd __attribute__((unused))) {
 }
 
 void
-ndc_disconnect(int fd) {
+ndc_disconnect(int fd __attribute__((unused))) {
 }
 
 char *
-ndc_auth_check(int fd) {
+ndc_auth_check(int fd __attribute__((unused))) {
 	return NULL;
 }
 
@@ -81,8 +81,6 @@ main(int argc, char *argv[])
 	};
 	register char c;
 
-	ndc_pre_init();
-
 	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) {
 		switch (c) {
 		case 'd':
@@ -90,12 +88,7 @@ main(int argc, char *argv[])
 			break;
 
 		case 'K':
-			ndc_certs_add(optarg);
-			break;
-
-		case 'k':
-			ndc_cert_add(optarg);
-			break;
+		case 'k': break;
 			
 		case 'C':
 			config.chroot = strdup(optarg);
@@ -119,6 +112,24 @@ main(int argc, char *argv[])
 		}
 	}
 
-	ndc_init(&config);
+	ndc_pre_init(&config);
+
+	optind = 1;
+
+	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) {
+		switch (c) {
+		case 'K':
+			ndc_certs_add(optarg);
+			break;
+
+		case 'k':
+			ndc_cert_add(optarg);
+			break;
+			
+		default: break;
+		}
+	}
+
+	ndc_init();
 	return ndc_main();
 }

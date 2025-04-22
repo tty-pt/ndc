@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.8.3",
+  "version": "0.8.4-beta-1",
   "description": "ndc example project",
   "main": "cjs/ndc.js",
   "browser": "htdocs/ndc.js",
@@ -42,14 +42,14 @@
   },
   "homepage": "",
   "devDependencies": {
-    "@tty-pt/qhash": "^0.6.16",
+    "@tty-pt/qhash": "^0.7.0-beta-2",
     "@tty-pt/scripts": "^0.6.9",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/xterm": "^5.5.0"
   },
   "peerDependencies": {
-    "@tty-pt/qhash": "^0.6.16",
+    "@tty-pt/qhash": "^0.7.0-beta-2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/xterm": "^5.5.0"
