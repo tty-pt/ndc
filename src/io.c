@@ -817,6 +817,8 @@ void ndc_init(void) {
 		ERR_print_errors_cb(openssl_error_callback, NULL);
 	}
 
+	qdb_reg("cmd", sizeof(struct cmd_slot));
+
 	if (!config.chroot)
 		ndclog(LOG_ERR, "Running from cwd\n");
 	else if (!geteuid()) {
@@ -827,15 +829,11 @@ void ndc_init(void) {
 	} else if (chdir(config.chroot) != 0)
 		ndclog_err("ndc_main chdir2\n");
 
-	static qdb_type_t qdb_cmd = {
-		.len = sizeof(struct cmd_slot)
-	};
-
-	cmds_hd = qdb_init(NULL, &qdb_string, &qdb_cmd);
+	cmds_hd = qdb_open(NULL, "s", "cmd", 0);
 	for (unsigned i = 0; cmds[i].name; i++)
 		qdb_put(cmds_hd, cmds[i].name, &cmds[i]);
 
-	mime_hd = qdb_init(NULL, &qdb_string, &qdb_string);
+	mime_hd = qdb_open(NULL, "s", "s", 0);
 	qdb_put(mime_hd, "html", "text/html");
 	qdb_put(mime_hd, "txt", "text/plain");
 	qdb_put(mime_hd, "css", "text/css");
@@ -1028,9 +1026,10 @@ do_sh(
 static inline unsigned
 headers_get(size_t *body_start, char *next_lines)
 {
-	void *prenv = qdb_env_pop();
-	unsigned req_hd = qdb_init(NULL, &qdb_string, &qdb_string);
-	qdb_env_set(prenv);
+	void *prenv = qdb_config.env;
+	qdb_config.env = NULL;
+	unsigned req_hd = qdb_open(NULL, "s", "s", 0);
+	qdb_config.env = prenv;
 	register char *s, *key, *value;
 
 	for (s = next_lines, key = s, value = s; *s; ) switch (*s) {
@@ -1496,16 +1495,16 @@ void ndc_pre_init(struct ndc_config *config_r) {
 	memcpy(&config, config_r, sizeof(config));
 	if ((ndc_srv_flags & NDC_DETACH))
 		ndclog = syslog;
-	ssl_certs = qdb_linit(NULL, &qdb_string);
-	ssl_keys = qdb_init(NULL, &qdb_unsigned, &qdb_string);
-	ssl_contexts = qdb_init(NULL, &qdb_unsigned, &qdb_ptr);
-	ssl_domains = qdb_init(NULL, &qdb_string, &qdb_unsigned);
+	ssl_certs = qdb_open(NULL, "u", "s", QH_AINDEX);
+	ssl_keys = qdb_open(NULL, "u", "s", 0);
+	ssl_contexts = qdb_open(NULL, "u", "p", 0);
+	ssl_domains = qdb_open(NULL, "s", "u", 0);
 }
 
 void _ndc_cert_add(char *domain, char *crt, char *key) {
 	SSL_CTX *ssl_ctx = ndc_ctx_new(crt, key);
 
-	unsigned id = qdb_new(ssl_certs, crt);
+	unsigned id = qdb_lput(ssl_certs, crt);
 	qdb_put(ssl_keys, &id, key);
 	qdb_put(ssl_contexts, &id, &ssl_ctx);
 	qdb_put(ssl_domains, domain, &id);
