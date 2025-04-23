@@ -75,7 +75,6 @@ usage(char *prog) {
 int
 main(int argc, char *argv[])
 {
-	char domain[BUFSIZ], crt[BUFSIZ], *ioc;
 	struct ndc_config config = {
 		.flags = NDC_DETACH,
 	};
@@ -112,6 +111,7 @@ main(int argc, char *argv[])
 		}
 	}
 
+	qdb_init();
 	ndc_pre_init(&config);
 
 	optind = 1;
