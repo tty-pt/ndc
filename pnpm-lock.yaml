@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@tty-pt/qhash':
-        specifier: ^0.7.0-beta-8
-        version: 0.7.0-beta-8
+        specifier: ^0.7.0-beta-9
+        version: 0.7.0-beta-9
       '@tty-pt/scripts':
         specifier: ^0.6.9
         version: 0.6.9(@testing-library/dom@9.3.4)(@types/babel__core@7.20.5)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(prettier@3.3.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(type-fest@2.19.0)
@@ -1516,8 +1516,8 @@ packages:
     resolution: {integrity: sha512-L7z9BgrNEcYyUYtF+HaEfiS5ebkh9jXqbszz7pC0hRBPaatV0XjSD3+eHrpqFemQfgwiFF0QPIarnIihIDn7OA==}
     engines: {node: '>=10.13.0'}
 
-  '@tty-pt/qhash@0.7.0-beta-8':
-    resolution: {integrity: sha512-QFiIgGTcpUR364ulq55D3AssmXLR89ivNiDcNaTU0dqvDBFNBq6miSy/NZvRMJ04uHzkSGtSpezj5Q09FeFAsg==}
+  '@tty-pt/qhash@0.7.0-beta-9':
+    resolution: {integrity: sha512-OEJrzcQ/p6Rygh4ouaTzTxQU6xc6J69wTqCH18Noxhj3d9R+SUxlJUBnlAQlGjoAbdbH7eLsdj3T8IGconK8pQ==}
 
   '@tty-pt/scripts@0.6.9':
     resolution: {integrity: sha512-uuYO8AkxZ6RukxJ7+GP/qWxhBUwJArdgE3xatA31Vz61cMoMD8ySsKYzs+FJq5WZVRijB1G8bHrQgmTZiB9B5g==}
@@ -6866,7 +6866,7 @@ snapshots:
 
   '@trysound/sax@0.2.0': {}
 
-  '@tty-pt/qhash@0.7.0-beta-8': {}
+  '@tty-pt/qhash@0.7.0-beta-9': {}
 
   '@tty-pt/scripts@0.6.9(@testing-library/dom@9.3.4)(@types/babel__core@7.20.5)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(prettier@3.3.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(type-fest@2.19.0)':
     dependencies:

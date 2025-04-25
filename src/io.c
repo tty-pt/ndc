@@ -276,12 +276,11 @@ ndc_rem_may_inc(int fd, size_t len) {
 	struct descr *d = &descr_map[fd];
 	d->remaining_len += len;
 
-	if (d->remaining_len < d->remaining_size)
-		return;
-
-	d->remaining_size *= 2;
-	d->remaining_size += d->remaining_len;
-	d->remaining = realloc(d->remaining, d->remaining_size);
+	while (d->remaining_len >= d->remaining_size) {
+		d->remaining_size *= 2;
+		d->remaining_size += d->remaining_len;
+		d->remaining = realloc(d->remaining, d->remaining_size);
+	}
 }
 
 ssize_t
