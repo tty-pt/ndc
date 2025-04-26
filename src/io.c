@@ -1216,7 +1216,7 @@ static char *env_sane(char *str) {
 	static char buf[BUFSIZ];
 	char *b;
 	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/'
-				|| *str == '&' || *str == '_' || *str == '-'
+				|| *str == '%' || *str == '&' || *str == '_' || *str == '-'
 				|| *str == ' ' || *str == '=' || *str == ';'); str++, b++)
 		*b = *str;
 	*b = '\0';
@@ -1504,7 +1504,7 @@ void ndc_pre_init(struct ndc_config *config_r) {
 void _ndc_cert_add(char *domain, char *crt, char *key) {
 	SSL_CTX *ssl_ctx = ndc_ctx_new(crt, key);
 
-	unsigned id = qdb_lput(ssl_certs, crt);
+	unsigned id = qdb_put(ssl_certs, NULL, crt);
 	qdb_put(ssl_keys, &id, key);
 	qdb_put(ssl_contexts, &id, &ssl_ctx);
 	qdb_put(ssl_domains, domain, &id);
