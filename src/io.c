@@ -1215,7 +1215,7 @@ int ndc_headers(int fd) {
 static char *env_sane(char *str) {
 	static char buf[BUFSIZ];
 	char *b;
-	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/'
+	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/' || *str == '+'
 				|| *str == '%' || *str == '&' || *str == '_' || *str == '-'
 				|| *str == ' ' || *str == '=' || *str == ';'); str++, b++)
 		*b = *str;

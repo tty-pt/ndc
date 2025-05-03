@@ -1,5 +1,6 @@
 *.o
-*.so
+/lib
+/bin
 /ndc
 /node_modules
 /htdocs
