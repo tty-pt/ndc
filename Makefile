@@ -3,7 +3,7 @@ PREFIX ?= /usr/local
 .PHONY:  all install install-bin uninstall clean
 .SUFFIXES: .so .c .o
 
-npm-lib := @tty-pt/qhash
+npm-lib := @tty-pt/qdb
 npm-root != npm root
 npm-root-dir != dirname ${npm-root}
 pwd != pwd
@@ -15,7 +15,7 @@ CFLAGS := -g -fPIC ${prefix:%=-I%/include} \
 	  -Wall -Wextra -Wpedantic
 uname != uname
 ldflags-Linux := -lrt
-LDFLAGS := -lc -lqhash -ldb -lcrypto -lssl ${ldflags-${uname}}
+LDFLAGS := -lc -lqdb -ldb -lcrypto -lssl ${ldflags-${uname}}
 LDFLAGS	+= ${prefix:%=-L%/lib} ${libdir:%=-Wl,-rpath,%/lib}
 LD := ${CC}
 

@@ -16,7 +16,7 @@
 #include <openssl/ssl.h>
 #include <pwd.h>
 #include <pwd.h>
-#include <qhash.h>
+#include <qdb.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -153,6 +153,7 @@ ndc_close(int fd)
 	FD_CLR(fd, &fds_active);
 	FD_CLR(fd, &fds_read);
 	d->fd = -1;
+	free(d->remaining);
 	memset(d, 0, sizeof(struct descr));
 }
 
