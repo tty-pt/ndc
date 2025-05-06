@@ -119,7 +119,7 @@ ndc_close(int fd)
 {
 	struct descr *d = &descr_map[fd];
 
-	if (d->remaining) {
+	if (d->remaining_size) {
 		free(d->remaining);
 		d->remaining = NULL;
 		d->remaining_len = d->remaining_size = 0;
@@ -153,7 +153,6 @@ ndc_close(int fd)
 	FD_CLR(fd, &fds_active);
 	FD_CLR(fd, &fds_read);
 	d->fd = -1;
-	free(d->remaining);
 	memset(d, 0, sizeof(struct descr));
 }
 
@@ -510,7 +509,6 @@ static void pty_open(int fd) {
 	TELNET_CMD(IAC, WONT, TELOPT_SGA);
 	descr_map[d->pty].fd = fd;
 	descr_map[d->pty].pty = -1;
-	FD_SET(d->pty, &fds_active);
 
 	d->tty.c_lflag = ICANON | ECHO | ECHOK | ECHOCTL;
 	d->tty.c_iflag = IGNCR;
@@ -594,59 +592,72 @@ descr_read(int fd)
 	return cmd_parse(fd, (char *) input, ret);
 }
 
-static void
+static int
 pty_read(int fd)
 {
 	struct descr *d = &descr_map[fd];
 	static char buf[BUFSIZ * 4];
+	int ret = -1;
 
 	errno = 0;
 	if (waitpid(d->pid, NULL, WNOHANG)) {
 		if (errno == EAGAIN)
-			return;
+			ret = 0;
 		goto close;
 	};
 
 	memset(buf, 0, sizeof(buf));
 	errno = 0;
-	int ret = read(d->pty, buf, sizeof(buf));
+	ret = read(d->pty, buf, sizeof(buf));
 
 	switch (ret) {
-		case 0: return;
+		case 0: break;
 		case -1:
 			if (errno == EAGAIN || errno == EIO)
-				return;
+				return 0;
 			else
 				break;
 		default:
 			buf[ret] = '\0';
 			ndc_write(fd, buf, ret);
 			ndc_tty_update(fd);
-			return;
+			return ret;
 	}
 
 close:	if (d->pid > 0)
 		kill(d->pid, SIGKILL);
 
 	d->pid = -1;
+	return ret;
 }
 
 static inline void descr_proc(void) {
-	for (register int i = 0; i < FD_SETSIZE; i++)
+	for (register int i = 0; i < FD_SETSIZE; i++) {
 		if (descr_map[i].remaining_len)
 			ndc_write_remaining(i);
-		else if (!(descr_map[i].flags & DF_ACCEPTED) && descr_map[i].cSSL)
+
+		if (!FD_ISSET(i, &fds_read))
+			continue;
+
+		if (!(descr_map[i].flags & DF_ACCEPTED) && descr_map[i].cSSL)
 			ssl_accept(i);
-		else if (!FD_ISSET(i, &fds_read))
-			;
-		else if (i == srv_fd)
+
+		if (i == srv_fd)
 			descr_new(0);
 		else if (i == srv_ssl_fd)
 			descr_new(1);
-		else if (descr_map[i].pty == -2)
-			pty_read(descr_map[i].fd);
-		else if (descr_map[i].pty != -1 && descr_read(i) < 0)
+
+		// i is a pty fd
+		if (descr_map[i].pty == -2) {
+			if (pty_read(descr_map[i].fd) <= 0)
+				FD_CLR(i, &fds_active);
+			continue;
+		}
+
+		// i is not a pty fd!
+		if (descr_read(i) < 0)
 			ndc_close(i);
+	}
 }
 
 static long long timestamp(void) {
@@ -872,8 +883,8 @@ int ndc_main(void) {
 			if (descr_map[i].remaining_len)
 				ndc_write_remaining(i);
 
-		timeout.tv_sec = 0;
-		timeout.tv_usec = 100;
+		timeout.tv_sec = 1;
+		timeout.tv_usec = 0;
 
 		fds_read = fds_active;
 		int select_n = select(FD_SETSIZE, &fds_read, NULL, NULL, &timeout);
@@ -892,8 +903,7 @@ int ndc_main(void) {
 		case 0: continue;
 		}
 
-		for (; select_n; select_n--)
-			descr_proc();
+		descr_proc();
 	}
 
 	return 0;
@@ -1005,6 +1015,7 @@ void ndc_pty(int fd, char * const args[]) {
 	/* 		args[0], fd, d->pty, WONT, WILL); */
 
 	d->pid = command_pty(fd, &d->wsz, args);
+	FD_SET(d->pty, &fds_active);
 
 	/* fprintf(stderr, "PTY master fd: %d\n", d->pty); */
 }
@@ -1126,7 +1137,7 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 
 		if (len > 0)
 			total += len;
-	} while (len != 0);
+	} while (len > 0);
 
 	close(in);
 	close(out);
@@ -1168,6 +1179,8 @@ again:
 	} else if (len < 0) switch (errno) {
 		case EAGAIN: return -1;
 		default: ndclog_perror("Error in read");
+	} else if (len == 0) {
+		return -1;
 	}
 
 	// stop iteration if output receives 0
@@ -1389,6 +1402,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			ndc_writef(fd, "HTTP/1.1 ");
 			int err;
 			if ((err = ndc_exec(fd, args, do_GET_cb, body, strlen(body)))) {
+				memset(execbuf, 0, sizeof(execbuf));
 				read(err, execbuf, sizeof(execbuf) - 1);
 				close(err);
 				ndclog(LOG_ERR, "%s\n", execbuf);
