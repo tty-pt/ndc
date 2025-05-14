@@ -36,6 +36,11 @@ ndc_command(int fd __attribute__((unused)), int argc __attribute__((unused)), ch
 }
 
 void
+ndc_flush(int fd __attribute__((unused)), int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
+{
+}
+
+void
 ndc_vim(int fd __attribute__((unused)), int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 {
 }

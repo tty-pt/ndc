@@ -442,6 +442,7 @@ cmd_proc(int fd, int argc, char *argv[])
 		cmd.cb(fd, argc, argv);
 	} else
 		ndc_vim(fd, argc, argv);
+	ndc_flush(fd, argc, argv);
 }
 
 static void
