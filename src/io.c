@@ -249,6 +249,8 @@ static ssize_t
 ndc_ssl_lower_write(int fd, void *from, size_t len)
 {
 	struct descr *d = &descr_map[fd];
+	if (!d->cSSL)
+		return -1;
 	return SSL_write(d->cSSL, from, len);
 }
 

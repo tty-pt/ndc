@@ -12,6 +12,12 @@ For now this is a POC, and it runs whatever shell is assigned to the user runnin
 
 <img src="https://github.com/tty-pt/ndc/blob/main/usage.gif?raw=true" width="512" />
 
+# Requirements
+You will need libssl. On ubuntu:
+```sh
+sudo apt install libssl-dev
+```
+
 # Install
 
 ```sh
