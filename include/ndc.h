@@ -54,12 +54,14 @@ void ndc_init(void);
 int ndc_main(void);
 
 /* define these */
-extern void ndc_update(unsigned long long dt);
-extern void ndc_vim(int fd, int argc, char *argv[]);
-extern int ndc_connect(int fd);
-extern void ndc_disconnect(int fd);
-extern void ndc_command(int fd, int argc, char *argv[]); /* will run on any command */
-extern void ndc_flush(int fd, int argc, char *argv[]); /* will run after any command */
+extern void ndc_update(unsigned long long dt) __attribute__((weak));
+extern void ndc_vim(int fd, int argc, char *argv[]) __attribute__((weak));
+extern int ndc_accept(int fd) __attribute__((weak));
+extern int ndc_connect(int fd) __attribute__((weak));
+extern void ndc_disconnect(int fd) __attribute__((weak));
+extern void ndc_command(int fd, int argc, char *argv[]) __attribute__((weak)); /* will run on any command */
+extern void ndc_flush(int fd, int argc, char *argv[]) __attribute__((weak)); /* will run after any command */
+extern char *ndc_auth_check(int fd) __attribute__((weak));
 
 /* write to descriptor (might not need) */
 int ndc_write(int fd, void *data, size_t len);
@@ -75,7 +77,6 @@ void ndc_pty(int fd, char * const args[]);
 int ndc_flags(int fd);
 void ndc_close(int fd);
 void ndc_set_flags(int fd, int flags);
-char *ndc_auth_check(int fd);
 void ndc_auth(int fd, char *username);
 int ndc_headers(int fd);
 void ndc_pre_init(struct ndc_config *config_r);

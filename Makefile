@@ -4,12 +4,9 @@ PREFIX ?= /usr/local
 .SUFFIXES: .so .c .o
 
 npm-lib := @tty-pt/qdb
-npm-root != npm root
-npm-root-dir != dirname ${npm-root}
-pwd != pwd
-prefix := ${pwd} ${npm-lib:%=${npm-root}/%} \
-	${npm-lib:%=${npm-root-dir}/../../%} \
-	/usr/local
+
+-include node_modules/@tty-pt/mk/include.mk
+
 RELDIR := .
 CFLAGS := -g -fPIC ${prefix:%=-I%/include} \
 	  -Wall -Wextra -Wpedantic

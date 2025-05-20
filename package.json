@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.9.5",
+  "version": "0.9.7",
   "description": "ndc example project",
   "main": "cjs/ndc.js",
   "browser": "htdocs/ndc.js",
@@ -81,5 +81,8 @@
     "ndc.pc",
     "include",
     "Makefile"
-  ]
+  ],
+  "dependencies": {
+    "@tty-pt/mk": "^0.0.1"
+  }
 }

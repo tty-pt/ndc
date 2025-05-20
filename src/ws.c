@@ -35,7 +35,8 @@ int __b64_ntop(unsigned char const *src, size_t srclength,
 int
 b64_ntop(u_char *src, size_t srclength, char *target, size_t target_size)
 {
-  int		 i, j, expect_siz;
+  size_t expect_siz, i;
+  int		 j;
   uint32_t	 bit24;
   const char	 b64str[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

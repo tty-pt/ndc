@@ -26,44 +26,6 @@ struct cmd_slot cmds[] = {
 };
 
 void
-ndc_update(unsigned long long dt __attribute__((unused)))
-{
-}
-
-void
-ndc_command(int fd __attribute__((unused)), int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
-{
-}
-
-void
-ndc_flush(int fd __attribute__((unused)), int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
-{
-}
-
-void
-ndc_vim(int fd __attribute__((unused)), int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
-{
-}
-
-int
-ndc_connect(int fd __attribute__((unused))) {
-	return 0;
-}
-
-void
-ndc_ws_init(int fd __attribute__((unused))) {
-}
-
-void
-ndc_disconnect(int fd __attribute__((unused))) {
-}
-
-char *
-ndc_auth_check(int fd __attribute__((unused))) {
-	return NULL;
-}
-
-void
 usage(char *prog) {
 	fprintf(stderr, "Usage: %s [-dr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT]\n", prog);
 	fprintf(stderr, "    Options:\n");

@@ -125,7 +125,7 @@ ndc_close(int fd)
 		d->remaining_len = d->remaining_size = 0;
 	}
 
-	if (d->flags & DF_CONNECTED)
+	if ((d->flags & DF_CONNECTED) && ndc_disconnect)
 		ndc_disconnect(fd);
 
 	d->flags = 0;
@@ -345,6 +345,7 @@ static void descr_new(int ssl) {
 		dio->read = dio->lower_read = read;
 		dio->lower_write = (io_t) write;
 	}
+	ndc_accept(fd);
 }
 
 inline static ssize_t
@@ -440,11 +441,13 @@ cmd_proc(int fd, int argc, char *argv[])
 	}
 
 	if (found) {
-		ndc_command(fd, argc, argv);
+		if (ndc_command)
+			ndc_command(fd, argc, argv);
 		cmd.cb(fd, argc, argv);
-	} else
+	} else if (ndc_vim)
 		ndc_vim(fd, argc, argv);
-	ndc_flush(fd, argc, argv);
+	if (ndc_flush)
+		ndc_flush(fd, argc, argv);
 }
 
 static void
@@ -543,7 +546,6 @@ descr_read(int fd)
 		if (errno == EAGAIN)
 			return 0;
 
-		ndclog(LOG_ERR, "descr_read: failed - will close\n");
 		return -1;
 	/* case 0: return 0; */
 	case 0: return -1;
@@ -877,7 +879,8 @@ int ndc_main(void) {
 		ndc_tick = timestamp();
 		dt = ndc_tick - last;
 
-		ndc_update(dt);
+		if (ndc_update)
+			ndc_update(dt);
 
 		if (!(ndc_srv_flags & NDC_WAKE))
 			break;
@@ -1209,7 +1212,7 @@ static void url_decode(char *str) {
 
     while (*src) {
         if (*src == '%' && src[1] && src[2] && isxdigit(src[1]) && isxdigit(src[2])) {
-            int value;
+            unsigned value;
             sscanf(src + 1, "%2x", &value);
             *dst++ = (char)value;
             src += 3;
@@ -1300,7 +1303,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 		dio->read = ws_read;
 		dio->write = ws_write;
 		TELNET_CMD(IAC, DO, TELOPT_NAWS);
-		if (ndc_connect(fd)) {
+		if (!ndc_connect || ndc_connect(fd)) {
 			d->flags |= DF_CONNECTED;
 			pty_open(fd);
 		}
