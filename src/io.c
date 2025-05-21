@@ -47,8 +47,6 @@
 	ndc_write(fd, command, sizeof(command)); \
 }
 
-typedef ssize_t (*cmd_cb_t)(int cfd, int pfd, int pid, int in, int out);
-
 #define FIRST_INPUT_SIZE (BUFSIZ * 2)
 
 static unsigned char *input;
@@ -93,6 +91,9 @@ long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
+
+static char execbuf[BUFSIZ * 64];
+static unsigned get_finish = 0;
 
 static void
 ndc_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
@@ -918,10 +919,10 @@ int ndc_main(void) {
 static struct passwd *drop_priviledges(int fd) {
 	struct descr *d = &descr_map[fd];
 
-	struct passwd *pw = getpwnam((d->flags & DF_AUTHENTICATED) ? d->username : "root");
+	struct passwd *pw = getpwnam((d->flags & DF_AUTHENTICATED) ? d->username : getlogin());
 
 	if (!config.chroot) {
-		ndclog(LOG_INFO, "NOT_CHROOTED\n");
+		ndclog(LOG_INFO, "NOT_CHROOTED - running with %s\n", getlogin());
 		return pw;
 	}
 	
@@ -1102,12 +1103,48 @@ popen2(int cfd, int *in, int *out, int *err, char * const args[])
 	return p;
 }
 
-static inline int
+static inline
+ssize_t cb_proc(
+		int fd,
+		int pfd,
+		int pid __attribute__((unused)),
+		int in __attribute__((unused)),
+		int out,
+		cmd_cb_t callback
+		) {
+	*execbuf = '\0';
+	ssize_t len;
+again:
+	len = read(pfd, execbuf, sizeof(execbuf) - 1);
+	if (len > 0) {
+		execbuf[len] = '\0';
+		if (pfd == out) {
+			get_finish = 0;
+			callback(fd, execbuf, len, 1);
+			return len;
+		}
+		callback(fd, execbuf, len, 2);
+		if (get_finish)
+			goto again;
+		return -1;
+	} else if (len < 0) switch (errno) {
+		case EAGAIN: return -1;
+		default: ndclog_perror("Error in read");
+	} else if (len == 0) {
+		return -1;
+	}
+
+	// stop iteration if output receives 0
+	return pfd == out ? 0 : -1;
+}
+
+int
 ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t input_len) {
 	ssize_t len = 0, total = 0;
 	int in, out, err, pid, pfd;
 
-	pid = popen2(cfd, &in, &out, &err, args); // should assert it equals 0
+	memset(execbuf, 0, sizeof(execbuf));
+	pid = popen2(cfd, &in, &out, &err, args); // should assert it doesn't equal 0
 
 	fd_set read_fds;
 	FD_ZERO(&read_fds);
@@ -1116,10 +1153,9 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 
 	int ready_fds;
 
-	if (input) {
+	if (input)
 		write(in, input, input_len);
-		close(in);
-	}
+	close(in);
 
 	do {
 		ready_fds = select(out + 1, &read_fds, NULL, NULL, NULL);
@@ -1139,13 +1175,12 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 		else
 			continue;
 
-		len = callback(cfd, pfd, pid, in, out);
+		len = cb_proc(cfd, pfd, pid, in, out, callback);
 
 		if (len > 0)
 			total += len;
 	} while (len > 0);
 
-	close(in);
 	close(out);
 	kill(pid, SIGKILL);
 	waitpid(pid, NULL, 0);
@@ -1153,44 +1188,21 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 	if (total == 0)
 		return err;
 
-	len = callback(cfd, err, pid, in, out);
+	len = cb_proc(cfd, err, pid, in, out, callback);
 	close(err);
 	return 0;
 }
 
-static char execbuf[BUFSIZ * 64];
-static unsigned get_finish = 0;
-
-ssize_t do_GET_cb(
+void do_GET_cb(
 		int fd,
-		int pfd,
-		int pid __attribute__((unused)),
-		int in __attribute__((unused)),
-		int out) {
-	*execbuf = '\0';
-	ssize_t len;
-again:
-	len = read(pfd, execbuf, sizeof(execbuf) - 1);
-	if (len > 0) {
-		execbuf[len] = '\0';
-		if (pfd == out) {
-			get_finish = 0;
-			ndc_write(fd, execbuf, len);
-			return len;
-		}
-		ndclog(LOG_ERR, "%s\n", execbuf);
-		if (get_finish)
-			goto again;
-		return -1;
-	} else if (len < 0) switch (errno) {
-		case EAGAIN: return -1;
-		default: ndclog_perror("Error in read");
-	} else if (len == 0) {
-		return -1;
-	}
+		char *buf,
+		size_t len,
+		int ofd) {
 
-	// stop iteration if output receives 0
-	return pfd == out ? 0 : -1;
+	if (ofd == 1)
+		ndc_write(fd, buf, len);
+	else
+		ndclog(LOG_ERR, "%s\n", buf);
 }
 
 static char *env_name(char *key) {
@@ -1408,7 +1420,6 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			ndc_writef(fd, "HTTP/1.1 ");
 			int err;
 			if ((err = ndc_exec(fd, args, do_GET_cb, body, strlen(body)))) {
-				memset(execbuf, 0, sizeof(execbuf));
 				read(err, execbuf, sizeof(execbuf) - 1);
 				close(err);
 				ndclog(LOG_ERR, "%s\n", execbuf);

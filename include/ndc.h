@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -33,6 +34,7 @@ struct ndc_config {
 };
 
 typedef void ndc_cb_t(int fd, int argc, char *argv[]);
+typedef void (*cmd_cb_t)(int cfd, char *buf, size_t len, int ofd);
 
 struct cmd_slot {
 	char *name;
@@ -82,6 +84,9 @@ int ndc_headers(int fd);
 void ndc_pre_init(struct ndc_config *config_r);
 void ndc_cert_add(char *str);
 void ndc_certs_add(char *fname);
+int ndc_exec(int cfd, char * const args[],
+		cmd_cb_t callback, void *input,
+		size_t input_len);
 
 extern ndc_log_t ndclog;
 
