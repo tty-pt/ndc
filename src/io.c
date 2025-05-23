@@ -92,7 +92,7 @@ SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
 
-static char execbuf[BUFSIZ * 64];
+char ndc_execbuf[BUFSIZ * 64];
 static unsigned get_finish = 0;
 
 static void
@@ -1112,18 +1112,18 @@ ssize_t cb_proc(
 		int out,
 		cmd_cb_t callback
 		) {
-	*execbuf = '\0';
+	*ndc_execbuf = '\0';
 	ssize_t len;
 again:
-	len = read(pfd, execbuf, sizeof(execbuf) - 1);
+	len = read(pfd, ndc_execbuf, sizeof(ndc_execbuf) - 1);
 	if (len > 0) {
-		execbuf[len] = '\0';
+		ndc_execbuf[len] = '\0';
 		if (pfd == out) {
 			get_finish = 0;
-			callback(fd, execbuf, len, 1);
+			callback(fd, ndc_execbuf, len, 1);
 			return len;
 		}
-		callback(fd, execbuf, len, 2);
+		callback(fd, ndc_execbuf, len, 2);
 		if (get_finish)
 			goto again;
 		return -1;
@@ -1143,7 +1143,7 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 	ssize_t len = 0, total = 0;
 	int in, out, err, pid, pfd;
 
-	memset(execbuf, 0, sizeof(execbuf));
+	memset(ndc_execbuf, 0, sizeof(ndc_execbuf));
 	pid = popen2(cfd, &in, &out, &err, args); // should assert it doesn't equal 0
 
 	fd_set read_fds;
@@ -1420,14 +1420,14 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			ndc_writef(fd, "HTTP/1.1 ");
 			int err;
 			if ((err = ndc_exec(fd, args, do_GET_cb, body, strlen(body)))) {
-				read(err, execbuf, sizeof(execbuf) - 1);
+				read(err, ndc_execbuf, sizeof(ndc_execbuf) - 1);
 				close(err);
-				ndclog(LOG_ERR, "%s\n", execbuf);
+				ndclog(LOG_ERR, "%s\n", ndc_execbuf);
 				ndc_writef(fd, "500 Internal Server Error\r\n"
 						"Content-Type: text/plain\r\n"
 						"Content-Length: %ld\r\n"
 						"\r\n"
-						"Code 500: Internal Server Error:\n%s\n", strlen(execbuf) + 37, execbuf);
+						"Code 500: Internal Server Error:\n%s\n", strlen(ndc_execbuf) + 37, ndc_execbuf);
 			}
 
 			c = qdb_iter(d->headers, NULL);

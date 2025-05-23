@@ -89,5 +89,6 @@ int ndc_exec(int cfd, char * const args[],
 		size_t input_len);
 
 extern ndc_log_t ndclog;
+extern char ndc_execbuf[BUFSIZ * 64];
 
 #endif
