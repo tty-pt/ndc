@@ -106,15 +106,6 @@ ndc_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
 
 ndc_log_t ndclog = ndc_logger_stderr;
 
-static inline void ndclog_perror(char *str) {
-        ndclog(LOG_ERR, "%s: %s\n", str, strerror(errno));
-}
-
-static inline void ndclog_err(char *str) {
-        ndclog_perror(str);
-        exit(EXIT_FAILURE);
-}
-
 void
 ndc_close(int fd)
 {

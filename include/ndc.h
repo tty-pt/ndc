@@ -88,7 +88,18 @@ int ndc_exec(int cfd, char * const args[],
 		cmd_cb_t callback, void *input,
 		size_t input_len);
 
-extern ndc_log_t ndclog;
 extern char ndc_execbuf[BUFSIZ * 64];
+extern ndc_log_t ndclog;
+
+// TODO we want formatted logs. Revise ndclog
+
+static inline void ndclog_perror(char *str) {
+        ndclog(LOG_ERR, "%s: %s\n", str, strerror(errno));
+}
+
+static inline void ndclog_err(char *str) {
+        ndclog_perror(str);
+        exit(EXIT_FAILURE);
+}
 
 #endif
