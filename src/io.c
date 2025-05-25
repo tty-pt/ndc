@@ -53,7 +53,7 @@ static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
 static unsigned ssl_certs, ssl_keys, ssl_domains, ssl_contexts;
 static char *statics_mmap;
-static size_t statics_len;
+static size_t statics_len = 0;
 
 struct io io[FD_SETSIZE];
 
@@ -761,16 +761,16 @@ void ndc_register(char *name, ndc_cb_t *cb, int flags) {
 	qdb_put(cmds_hd, name, &cmd);
 }
 
-inline static size_t ndc_mmap(char **mapped, char *file) {
+ssize_t ndc_mmap(char **mapped, char *file) {
 	int fd = open(file, O_RDONLY);
 
 	if (fd < 0)
-		ndclog_err("ndc_mmap: Failed to open file\n");
+		return 0;
 
 	struct stat sb;
 	if (fstat(fd, &sb) == -1) {
 		close(fd);
-		ndclog_err("ndc_mmap: Failed to get file size\n");
+		return 0;
 	}
 
 	size_t file_size = sb.st_size;
@@ -782,15 +782,13 @@ inline static size_t ndc_mmap(char **mapped, char *file) {
 	*mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 	close(fd);
 
-	if (*mapped == MAP_FAILED) {
-		ndclog_err("ndc_mmap: Failed to mmap file\n");
+	if (*mapped == MAP_FAILED)
 		return 0;
-	}
 
 	return file_size;
 }
 
-inline static char *ndc_mmap_iter(char *start, size_t *remaining) {
+char *ndc_mmap_iter(char *start, size_t *remaining) {
 	char *line_end = strchr(start, '\n');
 	if (!line_end)
 		return NULL;
