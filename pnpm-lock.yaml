@@ -7,11 +7,10 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@tty-pt/mk':
-        specifier: ^0.0.1
-        version: 0.0.1
     devDependencies:
+      '@tty-pt/mk':
+        specifier: ^0.0.7
+        version: 0.0.7
       '@tty-pt/qdb':
         specifier: ^0.0.14
         version: 0.0.14
@@ -1520,8 +1519,8 @@ packages:
     resolution: {integrity: sha512-L7z9BgrNEcYyUYtF+HaEfiS5ebkh9jXqbszz7pC0hRBPaatV0XjSD3+eHrpqFemQfgwiFF0QPIarnIihIDn7OA==}
     engines: {node: '>=10.13.0'}
 
-  '@tty-pt/mk@0.0.1':
-    resolution: {integrity: sha512-0mttCm5t4LmSmmh1AJL09011iLvodGycIJzYy1KM6XNSjKZWVlqlkm/caT6c2eoXZok6EkATGH8L/Y3bMrBrTQ==}
+  '@tty-pt/mk@0.0.7':
+    resolution: {integrity: sha512-z6+DlabxXC7VS9zb4MMaBIY1cAqAmMsGHPWvqLsWelHSgrvOCefpq5p4/QQSQAZK79qV7dA2eWEL1vAZHhy4Ig==}
 
   '@tty-pt/qdb@0.0.14':
     resolution: {integrity: sha512-VDTWsPUf4sj0JRYc+wDL67TalfHt/1g8B8fkZ+Gzpq1hQkLBxZFJWPk8atJ9CGjMT5hPsXd+oWNeG19LFs+x5A==}
@@ -6873,7 +6872,7 @@ snapshots:
 
   '@trysound/sax@0.2.0': {}
 
-  '@tty-pt/mk@0.0.1': {}
+  '@tty-pt/mk@0.0.7': {}
 
   '@tty-pt/qdb@0.0.14': {}
 

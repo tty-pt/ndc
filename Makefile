@@ -6,14 +6,13 @@ PREFIX ?= /usr/local
 npm-lib := @tty-pt/qdb
 
 -include node_modules/@tty-pt/mk/include.mk
+-include ../mk/include.mk
 
 RELDIR := .
-CFLAGS := -g -fPIC ${prefix:%=-I%/include} \
-	  -Wall -Wextra -Wpedantic
+CFLAGS += -fPIC -Wall -Wextra -Wpedantic
 uname != uname
 ldflags-Linux := -lrt
-LDFLAGS := -lc -lqdb -ldb -lcrypto -lssl ${ldflags-${uname}}
-LDFLAGS	+= ${prefix:%=-L%/lib} ${libdir:%=-Wl,-rpath,%/lib}
+LDFLAGS += -lc -lqdb -ldb -lcrypto -lssl ${ldflags-${uname}}
 LD := ${CC}
 
 all: lib/libndc.so bin/ndc
