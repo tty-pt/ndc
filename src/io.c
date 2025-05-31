@@ -337,7 +337,8 @@ static void descr_new(int ssl) {
 		dio->read = dio->lower_read = read;
 		dio->lower_write = (io_t) write;
 	}
-	ndc_accept(fd);
+	if (ndc_accept)
+		ndc_accept(fd);
 }
 
 inline static ssize_t
@@ -1245,6 +1246,8 @@ static char *env_sane(char *str) {
 }
 
 static void ndc_auth_try(int fd) {
+	if (!ndc_auth_check)
+		return;
 	char *user = ndc_auth_check(fd);
 	if (user)
 		ndc_auth(fd, user);
