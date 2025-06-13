@@ -103,6 +103,6 @@ static inline void ndclog_err(char *str) {
 }
 
 ssize_t ndc_mmap(char **mapped, char *file);
-char *ndc_mmap_iter(char *start, size_t *remaining);
+char *ndc_mmap_iter(char *start, size_t *pos);
 
 #endif

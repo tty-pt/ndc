@@ -27,7 +27,7 @@ lib bin:
 	mkdir $@ 2>/dev/null || true
 
 .c.o:
-	${CC} -o ${@:%=${RELDIR}/%} ${CFLAGS} ${<:%=${RELDIR}/%}
+	${CC} -c -o ${@:%=${RELDIR}/%} ${CFLAGS} ${<:%=${RELDIR}/%}
 
 interface := ndc ws
 interface := ${interface:%=include/%.h}

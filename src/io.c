@@ -789,18 +789,17 @@ ssize_t ndc_mmap(char **mapped, char *file) {
 	return file_size;
 }
 
-char *ndc_mmap_iter(char *start, size_t *remaining) {
+char *ndc_mmap_iter(char *start, size_t *pos_r) {
+	static char line[BUFSIZ];
+	start += *pos_r;
+	memset(line, 0, BUFSIZ);
 	char *line_end = strchr(start, '\n');
 	if (!line_end)
-		return NULL;
-
-	/* char temp = *line_end; */
-	*line_end = '\0';
-	*remaining = line_end - start;
-	line_end ++;
-	if (*line_end == '\0')
-		return NULL;
-	return line_end;
+		strncpy(line, start, BUFSIZ);
+	else
+		strncpy(line, start, line_end - start);
+	*pos_r += strlen(line) + 1;
+	return line;
 }
 
 void ndc_init(void) {
@@ -1256,15 +1255,14 @@ static void ndc_auth_try(int fd) {
 
 inline static char *static_allowed(const char *path) {
 	static char output[BUFSIZ];
-	char *cont = statics_mmap, *start, *param = strchr(path, '?'), *out = NULL;
-	size_t rem = statics_len;
+	char *rstart = statics_mmap, *start, *param = strchr(path, '?'), *out = NULL;
+	size_t pos = 0;
 
 	if (param)
 		*param = '\0';
 
 	do {
-		start = cont;
-		cont = ndc_mmap_iter(start, &rem);
+		start = ndc_mmap_iter(rstart, &pos);
 		char *glob = strchr(start, ' ');
 		if (!glob)
 			break;
@@ -1285,7 +1283,7 @@ inline static char *static_allowed(const char *path) {
 				break;
 			}
 		}
-	} while (cont);
+	} while (pos < statics_len);
 
 	if (param)
 		*param = '?';
@@ -1555,13 +1553,11 @@ void ndc_cert_add(char *optarg) {
 void ndc_certs_add(char *certs_file) {
 	char *mapped;
 	size_t file_size = ndc_mmap(&mapped, certs_file);
+	size_t pos = 0;
 
-	char *start = mapped, *cont;
-	do {
-		cont = ndc_mmap_iter(start, &file_size);
-		ndc_cert_add(start);
-		start = cont;
-	} while (start);
+	do
+		ndc_cert_add(ndc_mmap_iter(mapped, &pos));
+	while (pos < file_size);
 
 	if (munmap(mapped, file_size) == -1)
 		ndclog_err("ndc_certs_add: Failed to munmap file\n");
