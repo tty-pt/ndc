@@ -907,11 +907,13 @@ int ndc_main(void) {
 
 static struct passwd *drop_priviledges(int fd) {
 	struct descr *d = &descr_map[fd];
+	char euname[BUFSIZ];
+	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
 
-	struct passwd *pw = getpwnam((d->flags & DF_AUTHENTICATED) ? d->username : getlogin());
+	struct passwd *pw = getpwnam((d->flags & DF_AUTHENTICATED) ? d->username : euname);
 
 	if (!config.chroot) {
-		ndclog(LOG_INFO, "NOT_CHROOTED - running with %s\n", getlogin());
+		ndclog(LOG_INFO, "NOT_CHROOTED - running with %s\n", euname);
 		return pw;
 	}
 	
