@@ -974,8 +974,6 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		if (pflags == -1 || fcntl(slave_fd, F_SETFL, pflags | FD_CLOEXEC) == -1)
 			exit(EXIT_FAILURE);
 
-		/* fprintf(stderr, "open pty %s\n", ptsname(d->pty)); */
-
 		if (slave_fd == -1)
 			ndclog_err("command_pty open\n");
 
@@ -1240,7 +1238,7 @@ static char *env_sane(char *str) {
 	char *b;
 	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/' || *str == '+'
 				|| *str == '%' || *str == '&' || *str == '_' || *str == '-'
-				|| *str == ' ' || *str == '=' || *str == ';'); str++, b++)
+				|| *str == ' ' || *str == '=' || *str == ';' || *str == '.'); str++, b++)
 		*b = *str;
 	*b = '\0';
 	return buf;
@@ -1312,7 +1310,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			pty_open(fd);
 		}
 		return;
-	} else if (argc < 2 || strstr(argv[1], "..")) {
+	} else if (argc < 2 || argv[1][0] != '/' || strstr(argv[1], "..")) {
 		ndc_close(fd);
 		return;
 	}
