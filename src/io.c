@@ -502,8 +502,6 @@ static void pty_open(int fd) {
 	if (unlockpt(d->pty) == -1)
 		ndclog_err("pty_open unlockpt\n");
 
-	int flags = fcntl(d->pty, F_GETFL, 0);
-	fcntl(d->pty, F_SETFL, flags | O_NONBLOCK);
 	TELNET_CMD(IAC, WILL, TELOPT_ECHO);
 	TELNET_CMD(IAC, WONT, TELOPT_SGA);
 	descr_map[d->pty].fd = fd;
@@ -578,13 +576,9 @@ descr_read(int fd)
 	else
 		i++;
 
-	if (d->pid > 0) {
-		if (waitpid(d->pid, NULL, WNOHANG)) {
-			return 0;
-		} else if (i < ret) {
-			write(d->pty, input + i, ret);
-			return 0;
-		}
+	if (d->pid > 0 && i < ret) {
+		write(d->pty, input + i, ret);
+		return 0;
 	}
 
 	return cmd_parse(fd, (char *) input, ret);
@@ -595,26 +589,29 @@ pty_read(int fd)
 {
 	struct descr *d = &descr_map[fd];
 	static char buf[BUFSIZ * 4];
-	int ret = -1;
+	int ret = -1, status;
 
 	errno = 0;
-	if (waitpid(d->pid, NULL, WNOHANG)) {
-		if (errno == EAGAIN)
-			ret = 0;
-		goto close;
-	};
+	/* if (waitpid(d->pid, NULL, WNOHANG) > 0) { */
+	/* 	if (errno == EAGAIN) */
+	/* 		ret = 0; */
+	/* 	else */
+	/* 		goto close; */
+	/* }; */
 
 	memset(buf, 0, sizeof(buf));
 	errno = 0;
 	ret = read(d->pty, buf, sizeof(buf));
 
 	switch (ret) {
-		case 0: break;
+		case 0:
+			if (d->pid > 0 && waitpid(d->pid, &status, WNOHANG) == 0)
+				return 0;
+			break;
 		case -1:
 			if (errno == EAGAIN || errno == EIO)
 				return 0;
-			else
-				break;
+			return -1;
 		default:
 			buf[ret] = '\0';
 			ndc_write(fd, buf, ret);
@@ -622,7 +619,7 @@ pty_read(int fd)
 			return ret;
 	}
 
-close:	if (d->pid > 0)
+	if (d->pid > 0)
 		kill(d->pid, SIGKILL);
 
 	d->pid = -1;
@@ -647,7 +644,7 @@ static inline void descr_proc(void) {
 
 		// i is a pty fd
 		if (descr_map[i].pty == -2) {
-			if (pty_read(descr_map[i].fd) <= 0)
+			if (pty_read(descr_map[i].fd) < 0)
 				FD_CLR(i, &fds_active);
 			continue;
 		}
@@ -968,14 +965,16 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 			ndclog_err("NOT AUTHENTICATED\n");
 
 		int slave_fd = open(ptsname(d->pty), O_RDWR);
+		if (slave_fd == -1) {
+			ndclog(LOG_ERR, "command_pty open -1 %d\n", errno);
+			exit(EXIT_FAILURE);
+		}
 
 		struct passwd *pw = drop_priviledges(cfd);
-		int pflags = fcntl(slave_fd, F_GETFL, 0);
-		if (pflags == -1 || fcntl(slave_fd, F_SETFL, pflags | FD_CLOEXEC) == -1)
-			exit(EXIT_FAILURE);
 
-		if (slave_fd == -1)
-			ndclog_err("command_pty open\n");
+		int pflags = fcntl(slave_fd, F_GETFL, 0);
+		if (pflags == -1)
+			ndclog_err("command_pty pflags -1\n");
 
 		if (ioctl(slave_fd, TIOCSWINSZ, ws) == -1)
 			ndclog_err("command_pty ioctl TIOCSWINSZ\n");

@@ -12,8 +12,8 @@ importers:
         specifier: ^0.0.13
         version: 0.0.13
       '@tty-pt/qdb':
-        specifier: ^0.0.15
-        version: 0.0.15
+        specifier: ^0.0.17
+        version: 0.0.17
       '@tty-pt/scripts':
         specifier: ^0.6.9
         version: 0.6.9(@testing-library/dom@9.3.4)(@types/babel__core@7.20.5)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(prettier@3.3.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(type-fest@2.19.0)
@@ -1522,8 +1522,8 @@ packages:
   '@tty-pt/mk@0.0.13':
     resolution: {integrity: sha512-2buJa+LXGgJsSttlRA5YMa2h7KUdZXPumZXCQn/YK7q8vMGHgPlE3G2XSbvEkOGxVoJrjmP9ctmJCD6SBxCCqw==}
 
-  '@tty-pt/qdb@0.0.15':
-    resolution: {integrity: sha512-aMoWXTO5RsJSg3OrHg+mA2shO77bjvjwxIkTIdfUpzHhVhQaPEgfSlrqOGNbR8olROy/BvgExcjdQJcFwkEv1g==}
+  '@tty-pt/qdb@0.0.17':
+    resolution: {integrity: sha512-W42sydkeF1aLGulSr9WS5tC7yr2YD17VWv9gWPxbPf/+P+OANiyKc0hmlIKJeXkIUFik/ZlS33oiEloApvRysw==}
 
   '@tty-pt/scripts@0.6.9':
     resolution: {integrity: sha512-uuYO8AkxZ6RukxJ7+GP/qWxhBUwJArdgE3xatA31Vz61cMoMD8ySsKYzs+FJq5WZVRijB1G8bHrQgmTZiB9B5g==}
@@ -6874,7 +6874,7 @@ snapshots:
 
   '@tty-pt/mk@0.0.13': {}
 
-  '@tty-pt/qdb@0.0.15': {}
+  '@tty-pt/qdb@0.0.17': {}
 
   '@tty-pt/scripts@0.6.9(@testing-library/dom@9.3.4)(@types/babel__core@7.20.5)(@types/node@20.14.10)(@types/react-dom@18.3.0)(@types/react@18.3.3)(@types/testing-library__jest-dom@5.14.9)(prettier@3.3.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(type-fest@2.19.0)':
     dependencies:
