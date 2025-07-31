@@ -1,3 +1,30 @@
+.xterm {
+  --term-bg: rgba(0, 0, 0, 0.5);
+  --term-fg: #93ada5;
+}
+
+.xterm-cursor { color: #73fa91; }
+.xterm-color-1 { color: #112616; }
+.xterm-color-2 { color: #7f2b27; }
+.xterm-color-3 { color: #2f7e25; }
+.xterm-color-4 { color: #717f24; }
+.xterm-color-5 { color: #2f6a7f; }
+.xterm-color-6 { color: #47587f; }
+.xterm-color-7 { color: #327f77; }
+.xterm-color-8 { color: #647d75; }
+.xterm-color-9 { color: #e08009; }
+.xterm-color-10 { color: #18e000; }
+.xterm-color-11 { color: #bde000; }
+.xterm-color-12 { color: #00aae0; }
+.xterm-color-13 { color: #0058e0; }
+.xterm-color-14 { color: #00e0c4; }
+.xterm-color-15 { color: #73fa91; }
+
+.terminal-light .xterm {
+  --term-bg: #fff;
+  --term-fg: #000;
+}
+
 .margin-0 {margin: 0;}
 .size-vertical {height: 100%;}
 .size-vertical-view {height: 100vh;}
