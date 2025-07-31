@@ -1,13 +1,14 @@
 // import { Terminal } from "@xterm/xterm";
+import { Sub } from "@tty-pt/sub";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
 export
 function create(element, options = {}) {
   const {
-    argProto = proto,
-    argPort = window.location.port, 
-    url = argProto + "://" + window.location.hostname + ":" + argPort,
+    proto = location.protocol === "https:" ? "wss" : "ws",
+    port = window.location.port, 
+    url = proto + "://" + window.location.hostname + ":" + port,
   } = options;
 
   const fitAddon = new FitAddon();
@@ -27,11 +28,11 @@ function create(element, options = {}) {
   }
 
   const sub = new Sub({
-    ws, proto, port, term, send,
-    onMessage: function (_ev, _arr) {
-      return true;
-    },
-    write: data => term.write(data),
+    proto, port, url, ws, term,
+    onMessage: function (_ev, _arr) { return true; },
+    onOpen: function (_term, _ws) {},
+    onClose: function (_ws) {},
+    send, write: data => term.write(data),
   });
 
   const decoder = new TextDecoder('utf-8');
@@ -86,6 +87,7 @@ function create(element, options = {}) {
   function onOpen() {
     resolveConnect();
     fitAddon.fit();
+    sub.current().onOpen(term, ws);
   }
 
   function disconnect() {
@@ -95,14 +97,12 @@ function create(element, options = {}) {
   }
 
   function onClose() {
+    sub.current().onClose(ws);
+
     disconnect();
 
     // reconnect
-    sub.update("", create(element, {
-      proto: argProto,
-      port: argPort,
-      url,
-    }));
+    sub.update("", create(element, { proto, port, url }));
   }
 
   ws.addEventListener('open', onOpen);

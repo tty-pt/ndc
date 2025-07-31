@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/ndc",
-  "version": "0.12.1",
+  "version": "0.12.4",
   "description": "ndc example project",
   "main": "cjs/ndc.js",
   "browser": "htdocs/ndc.js",
@@ -17,6 +17,8 @@
     "./ndc.css": "./htdocs/ndc.css"
   },
   "external": {
+    "lodash": "global lodash",
+    "@tty-pt/sub": "global ttySub",
     "@xterm/addon-fit": "global FitAddon",
     "@xterm/addon-web-links": "global WebLinksAddon",
     "@xterm/xterm": "global Terminal"
@@ -45,16 +47,20 @@
     "@tty-pt/mk": "^0.0.13",
     "@tty-pt/qdb": "^0.2.0",
     "@tty-pt/scripts": "^0.7.1",
+    "@tty-pt/sub": "^2.3.3",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
-    "@xterm/xterm": "^5.5.0"
+    "@xterm/xterm": "^5.5.0",
+    "lodash": "^4.17.21"
   },
   "peerDependencies": {
     "@tty-pt/mk": "^0.0.13",
     "@tty-pt/qdb": "^0.2.0",
+    "@tty-pt/sub": "^2.3.3",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
-    "@xterm/xterm": "^5.5.0"
+    "@xterm/xterm": "^5.5.0",
+    "lodash": "^4.17.21"
   },
   "keywords": [
     "ndc",
