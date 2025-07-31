@@ -18,8 +18,8 @@ importers:
         specifier: ^0.7.1
         version: 0.7.1(@testing-library/dom@9.3.4)(esbuild-register@3.5.0(esbuild@0.25.8))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@tty-pt/sub':
-        specifier: ^2.3.3
-        version: 2.3.3(lodash@4.17.21)
+        specifier: ^2.3.6
+        version: 2.3.6(lodash@4.17.21)
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -772,8 +772,8 @@ packages:
     resolution: {integrity: sha512-KGtsfxx6r37KkHe3ilRCfWNIFb8V5CuB+Dme7+0cA0P6sJ59Xka5nFuEUJdSveuZ9pUCeG6+WMnikTZuKuoaDg==}
     hasBin: true
 
-  '@tty-pt/sub@2.3.3':
-    resolution: {integrity: sha512-oZzrUDD9pqru5CYm274OxSzEz81gGcPfO85m4dYQh4K4wukg+5DIajW5LoIECnfhiRGv8CBYGpZEdlztDg8U9A==}
+  '@tty-pt/sub@2.3.6':
+    resolution: {integrity: sha512-7L8qaNZ1GPHP0mRdu/2IyS61l/iUWrbzA7mc5ikhxEhBZZNxKRzQuVHSHhD+cGv2/fJz60ojM0nQC9qDeMam9g==}
     peerDependencies:
       lodash: ^4.17.21
 
@@ -4486,7 +4486,7 @@ snapshots:
       - ts-node
       - utf-8-validate
 
-  '@tty-pt/sub@2.3.3(lodash@4.17.21)':
+  '@tty-pt/sub@2.3.6(lodash@4.17.21)':
     dependencies:
       lodash: 4.17.21
     optionalDependencies:

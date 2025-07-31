@@ -3,6 +3,8 @@ import { Sub } from "@tty-pt/sub";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
+let term_max = 0;
+
 export
 function create(element, options = {}) {
   const {
@@ -23,17 +25,38 @@ function create(element, options = {}) {
   const ws = new WebSocket(url, 'binary');
   ws.binaryType = 'arraybuffer';
 
+  let sub = options.sub;
+
+  let subContents = {
+        ...options, ws, term,
+        write: data => term.write(data),
+  };
+
+  const terminst = term_max;
+  term_max++;
+
   function send(text) {
-    ws.send(text);
+    console.log("SEND!", terminst, text);
+    sub.value.ws.send(text);
   }
 
-  const sub = new Sub({
-    proto, port, url, ws, term,
-    onMessage: function (_ev, _arr) { return true; },
-    onOpen: function (_term, _ws) {},
-    onClose: function (_ws) {},
-    send, write: data => term.write(data),
-  });
+  if (sub) {
+    sub.update({
+      ...subContents,
+      onMessage: sub.value.onMessage,
+      onOpen: sub.value.onOpen,
+      onClose: sub.value.onClose,
+      send,
+    }, "");
+  } else {
+    sub = new Sub({
+      ...subContents,
+      onMessage: function (_ev, _arr) { return true; },
+      onOpen: function (_term, _ws) {},
+      onClose: function (_ws) {},
+      send,
+    });
+  }
 
   const decoder = new TextDecoder('utf-8');
   let resolveConnect = null;
@@ -44,7 +67,7 @@ function create(element, options = {}) {
 
   function onMessage(ev) {
     const arr = new Uint8Array(ev.data);
-    if (!sub.current().onMessage(ev, arr))
+    if (!sub.value.onMessage(ev, arr))
       return;
     else if (arr[0] != 255) {
       const data = decoder.decode(arr);
@@ -55,12 +78,12 @@ function create(element, options = {}) {
       switch (arr[2]) {
         case 1: // TELOPT_ECHO
           will_echo = false;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WONT ECHO");
           break;
         case 3: // TELOPT_SGA
           raw = false;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WONT SGA (ICANON/not raw)");
           break;
       }
@@ -68,12 +91,12 @@ function create(element, options = {}) {
       switch (arr[2]) {
         case 1: // TELOPT_ECHO
           will_echo = true;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WILL ECHO");
           break;
         case 3: // TELOPT_SGA
           raw = true;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WILL SGA (not ICANON/raw)");
           break;
       }
@@ -87,27 +110,37 @@ function create(element, options = {}) {
   function onOpen() {
     resolveConnect();
     fitAddon.fit();
-    sub.current().onOpen(term, ws);
+    sub.value.onOpen(term, ws);
   }
+
+  function onClose() {
+    sub.value.onClose(sub.value);
+
+    disconnect();
+    term.dispose();
+
+    // reconnect
+    const id = setInterval(() => {
+	    create(element, { ...options, sub });
+    }, 3000);
+
+    const prevOnOpen = sub.value.onOpen;
+
+    sub.update(function (ws) {
+      clearInterval(id);
+      prevOnOpen(ws);
+    }, "onOpen");
+  }
+
+  ws.addEventListener('open', onOpen);
+  ws.addEventListener('message', onMessage);
+  ws.addEventListener('close', onClose);
 
   function disconnect() {
     ws.removeEventListener('open', onOpen);
     ws.removeEventListener('message', onMessage);
     ws.removeEventListener('close', onClose);
   }
-
-  function onClose() {
-    sub.current().onClose(ws);
-
-    disconnect();
-
-    // reconnect
-    sub.update("", create(element, { proto, port, url }));
-  }
-
-  ws.addEventListener('open', onOpen);
-  ws.addEventListener('message', onMessage);
-  ws.addEventListener('close', onClose);
 
   function resize(cols, rows) {
     const IAC = 255;
@@ -149,7 +182,7 @@ function create(element, options = {}) {
     });
 
     term.onData(data => {
-      if (sub.current().debug)
+      if (options.debug)
         console.log("term.onData", data, data.charAt(0), raw, will_echo);
       if (raw)
         send(data === "\r" ? "\r\n" : data);
