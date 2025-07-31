@@ -27,13 +27,18 @@ function create(element, options = {}) {
     ws.send(text);
   }
 
-  const sub = new Sub({
-    proto, port, url, ws, term,
-    onMessage: function (_ev, _arr) { return true; },
-    onOpen: function (_term, _ws) {},
-    onClose: function (_ws) {},
-    send, write: data => term.write(data),
-  });
+  let sub = options.sub;
+  const subContents = {
+        ...options, ws, term, send,
+        write: data => term.write(data),
+  };
+
+  if (sub) {
+    sub.current().term.discard();
+    sub.update(subContents, "");
+  } else {
+    sub = new Sub(subContents);
+  }
 
   const decoder = new TextDecoder('utf-8');
   let resolveConnect = null;
@@ -44,7 +49,7 @@ function create(element, options = {}) {
 
   function onMessage(ev) {
     const arr = new Uint8Array(ev.data);
-    if (!sub.current().onMessage(ev, arr))
+    if (options.onMessage && !options.onMessage(ev, arr))
       return;
     else if (arr[0] != 255) {
       const data = decoder.decode(arr);
@@ -55,12 +60,12 @@ function create(element, options = {}) {
       switch (arr[2]) {
         case 1: // TELOPT_ECHO
           will_echo = false;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WONT ECHO");
           break;
         case 3: // TELOPT_SGA
           raw = false;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WONT SGA (ICANON/not raw)");
           break;
       }
@@ -68,12 +73,12 @@ function create(element, options = {}) {
       switch (arr[2]) {
         case 1: // TELOPT_ECHO
           will_echo = true;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WILL ECHO");
           break;
         case 3: // TELOPT_SGA
           raw = true;
-          if (sub.current().debug)
+          if (options.debug)
             console.log("WILL SGA (not ICANON/raw)");
           break;
       }
@@ -87,27 +92,38 @@ function create(element, options = {}) {
   function onOpen() {
     resolveConnect();
     fitAddon.fit();
-    sub.current().onOpen(term, ws);
+    if (options.onOpen)
+      options.onOpen(term, ws);
   }
+
+  function onClose() {
+    if (options.onClose)
+      options.onClose(ws);
+
+    disconnect();
+
+    // reconnect
+    const id = setInterval(() => {
+	    create(element, {
+		    ...options,
+		    onOpen: (term, ws) => {
+			    if (options.onOpen)
+				    options.onOpen(term, ws);
+			    clearInterval(id);
+		    },
+	    });
+    }, 5000);
+  }
+
+  ws.addEventListener('open', onOpen);
+  ws.addEventListener('message', onMessage);
+  ws.addEventListener('close', onClose);
 
   function disconnect() {
     ws.removeEventListener('open', onOpen);
     ws.removeEventListener('message', onMessage);
     ws.removeEventListener('close', onClose);
   }
-
-  function onClose() {
-    sub.current().onClose(ws);
-
-    disconnect();
-
-    // reconnect
-    sub.update("", create(element, { proto, port, url }));
-  }
-
-  ws.addEventListener('open', onOpen);
-  ws.addEventListener('message', onMessage);
-  ws.addEventListener('close', onClose);
 
   function resize(cols, rows) {
     const IAC = 255;
@@ -149,7 +165,7 @@ function create(element, options = {}) {
     });
 
     term.onData(data => {
-      if (sub.current().debug)
+      if (options.debug)
         console.log("term.onData", data, data.charAt(0), raw, will_echo);
       if (raw)
         send(data === "\r" ? "\r\n" : data);
