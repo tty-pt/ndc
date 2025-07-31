@@ -31,6 +31,8 @@ function create(element, options = {}) {
     onMessage: function (_ev, _arr) {
       return true;
     },
+    onOpen: function (_term, _ws) {},
+    onClose: function (_ws) {},
     write: data => term.write(data),
   });
 
@@ -86,6 +88,7 @@ function create(element, options = {}) {
   function onOpen() {
     resolveConnect();
     fitAddon.fit();
+    sub.current().onOpen(term, ws);
   }
 
   function disconnect() {
@@ -95,6 +98,8 @@ function create(element, options = {}) {
   }
 
   function onClose() {
+    sub.current().onClose(ws);
+
     disconnect();
 
     // reconnect
