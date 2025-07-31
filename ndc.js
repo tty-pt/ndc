@@ -102,7 +102,7 @@ function create(element, options = {}) {
     disconnect();
 
     // reconnect
-    sub.update("", create(element, { proto, port, url }));
+    sub.set("", create(element, { proto, port, url }));
   }
 
   ws.addEventListener('open', onOpen);
