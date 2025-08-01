@@ -1,10 +1,10 @@
 // import { Terminal } from "@xterm/xterm";
-import { Sub } from "@tty-pt/sub";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
 let term_max = 0;
 
+// TODO change this to a class
 export
 function create(element, options = {}) {
   const {
@@ -37,25 +37,25 @@ function create(element, options = {}) {
 
   function send(text) {
     console.log("SEND!", terminst, text);
-    sub.value.ws.send(text);
+    sub.ws.send(text);
   }
 
   if (sub) {
-    sub.update({
+    Object.assign(sub, {
       ...subContents,
-      onMessage: sub.value.onMessage,
-      onOpen: sub.value.onOpen,
-      onClose: sub.value.onClose,
+      onMessage: sub.onMessage,
+      onOpen: sub.onOpen,
+      onClose: sub.onClose,
       send,
-    }, "");
+    });
   } else {
-    sub = new Sub({
+    sub = {
       ...subContents,
       onMessage: function (_ev, _arr) { return true; },
       onOpen: function (_term, _ws) {},
       onClose: function (_ws) {},
       send,
-    });
+    };
   }
 
   const decoder = new TextDecoder('utf-8');
@@ -67,7 +67,7 @@ function create(element, options = {}) {
 
   function onMessage(ev) {
     const arr = new Uint8Array(ev.data);
-    if (!sub.value.onMessage(ev, arr))
+    if (!sub.onMessage(ev, arr))
       return;
     else if (arr[0] != 255) {
       const data = decoder.decode(arr);
@@ -107,14 +107,14 @@ function create(element, options = {}) {
     }
   }
 
-  function onOpen() {
+  function onOpen(term, ws) {
     resolveConnect();
     fitAddon.fit();
-    sub.value.onOpen(term, ws);
+    sub.onOpen(term, ws);
   }
 
   function onClose() {
-    sub.value.onClose(sub.value);
+    sub.onClose(sub);
 
     disconnect();
     term.dispose();
@@ -124,12 +124,13 @@ function create(element, options = {}) {
 	    create(element, { ...options, sub });
     }, 3000);
 
-    const prevOnOpen = sub.value.onOpen;
+    const prevOnOpen = sub.onOpen;
 
-    sub.update(function (ws) {
+    sub.onOpen = (term, ws) => {
       clearInterval(id);
-      prevOnOpen(ws);
-    }, "onOpen");
+      prevOnOpen(term, ws);
+      sub.onOpen = prevOnOpen;
+    };
   }
 
   ws.addEventListener('open', onOpen);
