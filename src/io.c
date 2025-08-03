@@ -4,6 +4,7 @@
 
 #include "../include/ndc.h"
 #include "../include/iio.h"
+#include <arpa/inet.h>
 #include <arpa/telnet.h>
 #include <ctype.h>
 #include <err.h>
@@ -311,6 +312,10 @@ static void descr_new(int ssl) {
 
 	if (fd <= 0)
 		return;
+
+	char ipstr[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &addr.sin_addr, ipstr, sizeof(ipstr));
+	printf("Accept %s:%d (%u)\n", ipstr, ntohs(addr.sin_port), fd);
 
 	/* fprintf(stderr, "descr_new %d\n", fd); */
 
@@ -1135,9 +1140,6 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 	pid = popen2(cfd, &in, &out, &err, args); // should assert it doesn't equal 0
 
 	fd_set read_fds;
-	FD_ZERO(&read_fds);
-	FD_SET(out, &read_fds);
-	FD_SET(err, &read_fds);
 
 	int ready_fds;
 
@@ -1146,6 +1148,9 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 	close(in);
 
 	do {
+		FD_ZERO(&read_fds);
+		FD_SET(out, &read_fds);
+		FD_SET(err, &read_fds);
 		ready_fds = select(out + 1, &read_fds, NULL, NULL, NULL);
 
 		if (!ready_fds)
@@ -1296,6 +1301,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	size_t body_start;
 	d->headers = headers_get(&body_start, argv[argc]);
 	char buf[BUFSIZ];
+
+	ndclog(LOG_ERR, "%d %s %s\n", fd, method, argv[1]);
+
 	if (!qdb_get(d->headers, buf, "Sec-WebSocket-Key")) {
 		struct io *dio = &io[fd];
 		if (ws_init(fd, buf))
@@ -1333,8 +1341,6 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 		return;
 	}
 	*/
-
-	/* fprintf(stderr, "%d %s %s\n", fd, method, argv[1]); */
 
 	chdir("./htdocs");
 
