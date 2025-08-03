@@ -1,3 +1,6 @@
+/* Improvements TODO:
+ * Make sure ndc_exec does not hang other requests
+ */
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #define _XOPEN_SOURCE 600
@@ -1002,6 +1005,7 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 
 		execvp(real_args[0], real_args);
 		ndclog_err("execvp\n");
+		_exit(127);
 	}
 
 	return p;
@@ -1083,8 +1087,10 @@ popen2(int cfd, int *in, int *out, int *err, char * const args[])
 		dup2(pipe_stdout[1], 1);
 		close(pipe_stderr[0]);
 		dup2(pipe_stderr[1], 2);
+		setpgid(0, 0);
 		execvp(args[0], args);
 		ndclog_err("popen2: execvp\n");
+		_exit(127);
 	}
 
 	*in = pipe_stdin[1];
@@ -1147,14 +1153,29 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 		write(in, input, input_len);
 	close(in);
 
+	time_t started = time(NULL);
+	int total_timeout = 10;
+
 	do {
+		struct timeval timeout = { 1, 0 };
 		FD_ZERO(&read_fds);
 		FD_SET(out, &read_fds);
 		FD_SET(err, &read_fds);
-		ready_fds = select(out + 1, &read_fds, NULL, NULL, NULL);
+		ready_fds = select(out + 1, &read_fds, NULL, NULL, &timeout);
 
-		if (!ready_fds)
+		if (!ready_fds) {
+			if (time(NULL) - started >= total_timeout) {
+				ndc_writef(cfd, "504 Gateway Timeout\r\n"
+						"Content-Type: text/plain\r\n"
+						"Content-Length: 26\r\n"
+						"\r\n"
+						"Code 504: Gateway Timeout\n");
+				ndclog(LOG_ERR, "Timeout!\n");
+				break;
+			}
+
 			continue;
+		}
 
 		if (ready_fds == -1) {
 			ndclog_perror("Error in select");
@@ -1170,12 +1191,14 @@ ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t in
 
 		len = cb_proc(cfd, pfd, pid, in, out, callback);
 
-		if (len > 0)
-			total += len;
-	} while (len > 0);
+		if (len <= 0)
+			break;
+
+		total += len;
+	} while (1);
 
 	close(out);
-	kill(pid, SIGKILL);
+	kill(-pid, SIGKILL);
 	waitpid(pid, NULL, 0);
 
 	if (total == 0)
