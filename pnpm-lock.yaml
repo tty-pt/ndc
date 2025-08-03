@@ -12,8 +12,8 @@ importers:
         specifier: ^0.0.13
         version: 0.0.13
       '@tty-pt/qdb':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.2.2
+        version: 0.2.2
       '@tty-pt/scripts':
         specifier: ^0.7.2
         version: 0.7.2(@testing-library/dom@10.4.1)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
@@ -751,8 +751,8 @@ packages:
   '@tty-pt/mk@0.0.13':
     resolution: {integrity: sha512-2buJa+LXGgJsSttlRA5YMa2h7KUdZXPumZXCQn/YK7q8vMGHgPlE3G2XSbvEkOGxVoJrjmP9ctmJCD6SBxCCqw==}
 
-  '@tty-pt/qdb@0.2.0':
-    resolution: {integrity: sha512-2SUe9CWT8Yp0GOQRdiJqKtBF81gi9qM+qHO9mGfYGrc4RcQpOzWdDLcoNkDBK6dzkCO5OlWk0KEFrpPXvtzG9Q==}
+  '@tty-pt/qdb@0.2.2':
+    resolution: {integrity: sha512-frBEVdgk5Mr5RrO29nGWV06GIxpqdfvcQ7Wx+L62rmf0BYD3WDiw3g3X2RYxdqinAdCf72fmrvMBlU1HYX0pXA==}
 
   '@tty-pt/scripts@0.7.2':
     resolution: {integrity: sha512-PaIO1ECCzxyj2oX9wS6y/6JC0q96EWtBdvWl9R5wsXHjqxtTuChvQ7gHGhF0m8Q0aGNOBDLs2ecfzIiXo4XFEQ==}
@@ -4368,7 +4368,7 @@ snapshots:
 
   '@tty-pt/mk@0.0.13': {}
 
-  '@tty-pt/qdb@0.2.0': {}
+  '@tty-pt/qdb@0.2.2': {}
 
   '@tty-pt/scripts@0.7.2(@testing-library/dom@10.4.1)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)':
     dependencies:

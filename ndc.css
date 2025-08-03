@@ -4,26 +4,21 @@
 }
 
 .xterm-cursor { color: #73fa91; }
-.xterm-color-1 { color: #112616; }
-.xterm-color-2 { color: #7f2b27; }
-.xterm-color-3 { color: #2f7e25; }
-.xterm-color-4 { color: #717f24; }
-.xterm-color-5 { color: #2f6a7f; }
-.xterm-color-6 { color: #47587f; }
-.xterm-color-7 { color: #327f77; }
-.xterm-color-8 { color: #647d75; }
-.xterm-color-9 { color: #e08009; }
-.xterm-color-10 { color: #18e000; }
-.xterm-color-11 { color: #bde000; }
-.xterm-color-12 { color: #00aae0; }
-.xterm-color-13 { color: #0058e0; }
-.xterm-color-14 { color: #00e0c4; }
-.xterm-color-15 { color: #73fa91; }
-
-.terminal-light .xterm {
-  --term-bg: #fff;
-  --term-fg: #000;
-}
+.xterm-fg-1, .xterm-bg-1 { color: #112616; }
+.xterm-fg-2, .xterm-bg-2 { color: #7f2b27; }
+.xterm-fg-3, .xterm-bg-3 { color: #2f7e25; }
+.xterm-fg-4, .xterm-bg-4 { color: #717f24; }
+.xterm-fg-5, .xterm-bg-5 { color: #2f6a7f; }
+.xterm-fg-6, .xterm-bg-6 { color: #47587f; }
+.xterm-fg-7, .xterm-bg-7 { color: #327f77; }
+.xterm-fg-8, .xterm-bg-8 { color: #647d75; }
+.xterm-fg-9, .xterm-bg-9 { color: #e08009; }
+.xterm-fg-0, .xterm-bg-0 { color: #18e000; }
+.xterm-fg-1, .xterm-bg-1 { color: #bde000; }
+.xterm-fg-2, .xterm-bg-2 { color: #00aae0; }
+.xterm-fg-3, .xterm-bg-3 { color: #0058e0; }
+.xterm-fg-4, .xterm-bg-4 { color: #00e0c4; }
+.xterm-fg-5, .xterm-bg-5 { color: #73fa91; }
 
 .margin-0 {margin: 0;}
 .size-vertical {height: 100%;}
