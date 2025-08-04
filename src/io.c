@@ -1,6 +1,3 @@
-/* Improvements TODO:
- * Make sure ndc_exec does not hang other requests
- */
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #define _XOPEN_SOURCE 600
@@ -63,13 +60,18 @@ struct io io[FD_SETSIZE];
 
 struct descr {
 	SSL *cSSL;
-	int fd, flags, pty, pid;
+	int fd, flags, pty, pid, epid;
 	char username[BUFSIZ];
 	struct winsize wsz;
 	struct termios tty;
 	unsigned headers;
 	char *remaining;
+	struct sockaddr_in addr;
 	size_t remaining_size, remaining_len;
+	time_t sor; // start of request
+	int pipes[3], pipes_mask;
+	cmd_cb_t callback;
+	size_t total;
 } descr_map[FD_SETSIZE];
 
 struct cmd {
@@ -97,7 +99,6 @@ long long ndc_tick;
 int do_cleanup = 1;
 
 char ndc_execbuf[BUFSIZ * 64];
-static unsigned get_finish = 0;
 
 static void
 ndc_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
@@ -316,10 +317,6 @@ static void descr_new(int ssl) {
 	if (fd <= 0)
 		return;
 
-	char ipstr[INET_ADDRSTRLEN];
-	inet_ntop(AF_INET, &addr.sin_addr, ipstr, sizeof(ipstr));
-	printf("Accept %s:%d (%u)\n", ipstr, ntohs(addr.sin_port), fd);
-
 	/* fprintf(stderr, "descr_new %d\n", fd); */
 
 	FD_SET(fd, &fds_active);
@@ -327,10 +324,13 @@ static void descr_new(int ssl) {
 	d = &descr_map[fd];
 	dio = &io[fd];
 	memset(d, 0, sizeof(struct descr));
+	memset(dio, 0, sizeof(struct io));
+	d->addr = addr;
 	d->fd = fd;
 	d->flags = DF_ACCEPTED;
 	d->remaining_size = BUFSIZ * 64;
 	d->remaining = malloc(d->remaining_size);
+	d->epid = 0;
 	dio->write = ndc_low_write;
 
 	errno = 0;
@@ -634,15 +634,35 @@ pty_read(int fd)
 	return ret;
 }
 
-static inline void descr_proc(void) {
+int ndc_exec_loop(int cfd);
+
+static inline void descr_proc_writes(void) {
 	for (register int i = 0; i < FD_SETSIZE; i++) {
-		if (descr_map[i].remaining_len)
+		struct descr *d = &descr_map[i];
+
+		if (d->remaining_len)
 			ndc_write_remaining(i);
+
+		if (!FD_ISSET(i, &fds_active)
+				|| i == srv_fd
+				|| i == srv_ssl_fd
+				|| d->pty == -2)
+			continue;
+
+		// i is not a pty fd!
+		if (d->epid)
+			ndc_exec_loop(i);
+	}
+}
+
+static inline void descr_proc_reads(void) {
+	for (register int i = 0; i < FD_SETSIZE; i++) {
+		struct descr *d = &descr_map[i];
 
 		if (!FD_ISSET(i, &fds_read))
 			continue;
 
-		if (!(descr_map[i].flags & DF_ACCEPTED) && descr_map[i].cSSL)
+		if (!(d->flags & DF_ACCEPTED) && d->cSSL)
 			ssl_accept(i);
 
 		if (i == srv_fd)
@@ -651,14 +671,14 @@ static inline void descr_proc(void) {
 			descr_new(1);
 
 		// i is a pty fd
-		if (descr_map[i].pty == -2) {
-			if (pty_read(descr_map[i].fd) < 0)
+		if (d->pty == -2) {
+			if (pty_read(d->fd) < 0)
 				FD_CLR(i, &fds_active);
 			continue;
 		}
 
 		// i is not a pty fd!
-		if (descr_read(i) < 0)
+		if (!d->epid && descr_read(i) < 0)
 			ndc_close(i);
 	}
 }
@@ -884,11 +904,12 @@ int ndc_main(void) {
 			if (descr_map[i].remaining_len)
 				ndc_write_remaining(i);
 
-		timeout.tv_sec = 1;
-		timeout.tv_usec = 0;
+		timeout.tv_sec = 0;
+		timeout.tv_usec = 1000;
 
 		fds_read = fds_active;
 		int select_n = select(FD_SETSIZE, &fds_read, NULL, NULL, &timeout);
+		descr_proc_writes();
 
 		switch (select_n) {
 		case -1:
@@ -904,7 +925,7 @@ int ndc_main(void) {
 		case 0: continue;
 		}
 
-		descr_proc();
+		descr_proc_reads();
 	}
 
 	return 0;
@@ -1070,8 +1091,9 @@ headers_get(size_t *body_start, char *next_lines)
 }
 
 static inline int
-popen2(int cfd, int *in, int *out, int *err, char * const args[])
+popen2(int cfd, char * const args[])
 {
+	struct descr *d = &descr_map[cfd];
 	pid_t p = -1;
 	int pipe_stdin[2], pipe_stdout[2], pipe_stderr[2];
 
@@ -1093,9 +1115,9 @@ popen2(int cfd, int *in, int *out, int *err, char * const args[])
 		_exit(127);
 	}
 
-	*in = pipe_stdin[1];
-	*out = pipe_stdout[0];
-	*err = pipe_stderr[0];
+	d->pipes[0] = pipe_stdin[1];
+	d->pipes[1] = pipe_stdout[0];
+	d->pipes[2] = pipe_stderr[0];
 	close(pipe_stdin[0]);
 	close(pipe_stdout[1]);
 	close(pipe_stderr[1]);
@@ -1106,119 +1128,29 @@ static inline
 ssize_t cb_proc(
 		int fd,
 		int pfd,
-		int pid __attribute__((unused)),
-		int in __attribute__((unused)),
-		int out,
 		cmd_cb_t callback
-		) {
-	*ndc_execbuf = '\0';
+		)
+{
+	struct descr *d = &descr_map[fd];
+	memset(ndc_execbuf, 0, sizeof(ndc_execbuf));
 	ssize_t len;
-again:
+	int ofd;
+
+	*ndc_execbuf = '\0';
+
+	ofd = pfd == d->pipes[1];
 	len = read(pfd, ndc_execbuf, sizeof(ndc_execbuf) - 1);
 	if (len > 0) {
 		ndc_execbuf[len] = '\0';
-		if (pfd == out) {
-			get_finish = 0;
-			callback(fd, ndc_execbuf, len, 1);
-			return len;
-		}
-		callback(fd, ndc_execbuf, len, 2);
-		if (get_finish)
-			goto again;
-		return -1;
-	} else if (len < 0) switch (errno) {
-		case EAGAIN: return -1;
-		default: ndclog_perror("Error in read");
-	} else if (len == 0) {
+		callback(fd, ndc_execbuf, len, ofd);
+	} else if (len < 0) {
+		if (errno != EAGAIN)
+			ndclog_perror("Error in read");
 		return -1;
 	}
 
 	// stop iteration if output receives 0
-	return pfd == out ? 0 : -1;
-}
-
-int
-ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t input_len) {
-	ssize_t len = 0, total = 0;
-	int in, out, err, pid, pfd;
-
-	memset(ndc_execbuf, 0, sizeof(ndc_execbuf));
-	pid = popen2(cfd, &in, &out, &err, args); // should assert it doesn't equal 0
-
-	fd_set read_fds;
-
-	int ready_fds;
-
-	if (input)
-		write(in, input, input_len);
-	close(in);
-
-	time_t started = time(NULL);
-	int total_timeout = 10;
-
-	do {
-		struct timeval timeout = { 1, 0 };
-		FD_ZERO(&read_fds);
-		FD_SET(out, &read_fds);
-		FD_SET(err, &read_fds);
-		ready_fds = select(out + 1, &read_fds, NULL, NULL, &timeout);
-
-		if (!ready_fds) {
-			if (time(NULL) - started >= total_timeout) {
-				ndc_writef(cfd, "504 Gateway Timeout\r\n"
-						"Content-Type: text/plain\r\n"
-						"Content-Length: 26\r\n"
-						"\r\n"
-						"Code 504: Gateway Timeout\n");
-				ndclog(LOG_ERR, "Timeout!\n");
-				break;
-			}
-
-			continue;
-		}
-
-		if (ready_fds == -1) {
-			ndclog_perror("Error in select");
-			break;
-		}
-
-		if (FD_ISSET(out, &read_fds))
-			pfd = out;
-		else if (FD_ISSET(err, &read_fds))
-			pfd = err;
-		else
-			continue;
-
-		len = cb_proc(cfd, pfd, pid, in, out, callback);
-
-		if (len <= 0)
-			break;
-
-		total += len;
-	} while (1);
-
-	close(out);
-	kill(-pid, SIGKILL);
-	waitpid(pid, NULL, 0);
-
-	if (total == 0)
-		return err;
-
-	len = cb_proc(cfd, err, pid, in, out, callback);
-	close(err);
-	return 0;
-}
-
-void do_GET_cb(
-		int fd,
-		char *buf,
-		size_t len,
-		int ofd) {
-
-	if (ofd == 1)
-		ndc_write(fd, buf, len);
-	else
-		ndclog(LOG_ERR, "%s\n", buf);
+	return len;
 }
 
 static char *env_name(char *key) {
@@ -1233,6 +1165,140 @@ static char *env_name(char *key) {
 		else
 			*b = toupper(*s);
 	return buf;
+}
+
+int
+ndc_exec_loop(int cfd) {
+	struct descr *d = &descr_map[cfd];
+	fd_set read_fds;
+	int ready_fds, total_timeout = 15, ret = 0;
+	ssize_t len = 0;
+
+	do {
+		struct timeval timeout = { 0, 1000 };
+		int pfd;
+
+		if (!d->pipes_mask)
+			break;
+
+		if (time(NULL) - d->sor >= total_timeout) {
+			ndc_writef(cfd, "504 Gateway Timeout\r\n"
+					"Content-Type: text/plain\r\n"
+					"Content-Length: 26\r\n"
+					"\r\n"
+					"Code 504: Gateway Timeout\n");
+			ndclog(LOG_ERR, "Timeout! %u\n", cfd);
+			break;
+		}
+
+		FD_ZERO(&read_fds);
+		if (d->pipes_mask & 1)
+			FD_SET(d->pipes[1], &read_fds);
+		if (d->pipes_mask & 2)
+			FD_SET(d->pipes[2], &read_fds);
+
+		ready_fds = select(d->pipes[1] + 1, &read_fds, NULL, NULL, &timeout);
+
+		if (!ready_fds)
+			return 1;
+
+		if (ready_fds == -1) {
+			ndclog_perror("Error in select");
+			break;
+		}
+
+		if (FD_ISSET(d->pipes[1], &read_fds))
+			pfd = d->pipes[1];
+		else if (FD_ISSET(d->pipes[2], &read_fds))
+			pfd = d->pipes[2];
+		else
+			continue;
+
+		errno = 0;
+		len = cb_proc(cfd, pfd, d->callback);
+
+		if (len > 0) {
+			d->total += len;
+			return 1;
+		}
+
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			FD_SET(cfd, &fds_active);
+			FD_SET(cfd, &fds_read);
+			return 1;
+		}
+
+		if (pfd == d->pipes[1]) {
+			d->pipes_mask &= ~1;
+			break;
+		} else
+			d->pipes_mask &= ~2;
+
+	} while (d->pipes_mask);
+
+	if (d->total == 0) {
+		read(d->pipes[2], ndc_execbuf, sizeof(ndc_execbuf) - 1);
+		ndclog(LOG_ERR, "%s\n", ndc_execbuf);
+		ndc_writef(cfd, "500 Internal Server Error\r\n"
+				"Content-Type: text/plain\r\n"
+				"Content-Length: %ld\r\n"
+				"\r\n"
+				"Code 500: Internal Server Error:\n%s\n", strlen(ndc_execbuf) + 37, ndc_execbuf);
+		ret = -1;
+	} else {
+		len = cb_proc(cfd, d->pipes[2], d->callback);
+	}
+
+	d->flags |= DF_TO_CLOSE;
+	close(d->pipes[1]);
+	close(d->pipes[2]);
+	kill(-d->epid, SIGKILL);
+	waitpid(d->epid, NULL, 0);
+	d->epid = 0;
+
+
+	char key[BUFSIZ], value[BUFSIZ];
+	qdb_cur_t c = qdb_iter(d->headers, NULL);
+	while (qdb_next(key, &value, &c))
+		unsetenv(env_name(key));
+	if (!d->remaining_len)
+		ndc_close(cfd);
+	return ret;
+}
+
+void
+ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t input_len) {
+	struct descr *d = &descr_map[cfd];
+	int flags;
+
+	d->epid = popen2(cfd, args); // should assert it doesn't equal 0
+	d->pipes_mask = 3;
+
+	flags = fcntl(d->pipes[1], F_GETFL, 0);
+	fcntl(d->pipes[1], F_SETFL, flags | O_NONBLOCK);
+	flags = fcntl(d->pipes[2], F_GETFL, 0);
+	fcntl(d->pipes[2], F_SETFL, flags | O_NONBLOCK);
+
+	if (input)
+		write(d->pipes[0], input, input_len);
+	close(d->pipes[0]);
+
+	d->sor = time(NULL);
+	d->total = 0;
+	d->callback = callback;
+	FD_SET(cfd, &fds_active);
+}
+
+void do_GET_cb(
+		int fd,
+		char *buf,
+		size_t len,
+		int ofd) {
+
+	if (ofd == 1)
+		ndc_write(fd, buf, len);
+	else
+		ndclog(LOG_ERR, "%s\n", buf);
 }
 
 static void url_decode(char *str) {
@@ -1283,6 +1349,7 @@ static void ndc_auth_try(int fd) {
 inline static char *static_allowed(const char *path) {
 	static char output[BUFSIZ];
 	char *rstart = statics_mmap, *start, *param = strchr(path, '?'), *out = NULL;
+	struct stat stat_buf;
 	size_t pos = 0;
 
 	if (param)
@@ -1306,6 +1373,8 @@ inline static char *static_allowed(const char *path) {
 			size_t len = snprintf(output, sizeof(output), "../%s/%s", start, path + offset);
 			*glob = aux;
 			if (output[len - 1] != '/') {
+				if (stat(output, &stat_buf))
+					continue;
 				out = output;
 				break;
 			}
@@ -1325,7 +1394,9 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 	d->headers = headers_get(&body_start, argv[argc]);
 	char buf[BUFSIZ];
 
-	ndclog(LOG_ERR, "%d %s %s\n", fd, method, argv[1]);
+	char ipstr[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &d->addr.sin_addr, ipstr, sizeof(ipstr));
+	ndclog(LOG_ERR, "%d (%s) %s %s\n", fd, ipstr, method, argv[1]);
 
 	if (!qdb_get(d->headers, buf, "Sec-WebSocket-Key")) {
 		struct io *dio = &io[fd];
@@ -1380,7 +1451,6 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 		goto end;
 	}
 
-
 	static char *content_type = "text/plain";
 	char *status = "200 OK";
 	struct stat stat_buf;
@@ -1400,7 +1470,7 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 
 	char *statical = static_allowed(filename + 1);
 	if (statical)
-		strcpy(filename, statical);
+		strlcpy(filename, statical, sizeof(filename));
 
 	if (!argv[1][1] || stat(filename, &stat_buf)) {
 		if (stat(alt, &stat_buf)) {
@@ -1433,26 +1503,13 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 			setenv("QUERY_STRING", env_sane(query_string), 1);
 			setenv("SCRIPT_NAME", alt, 1);
 			setenv("REQUEST_METHOD", method, 1);
+			setenv("REMOTE_ADDR", ipstr, 1);
 			setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
 			chdir("..");
 			ndc_writef(fd, "HTTP/1.1 ");
-			int err;
-			if ((err = ndc_exec(fd, args, do_GET_cb, body, strlen(body)))) {
-				read(err, ndc_execbuf, sizeof(ndc_execbuf) - 1);
-				close(err);
-				ndclog(LOG_ERR, "%s\n", ndc_execbuf);
-				ndc_writef(fd, "500 Internal Server Error\r\n"
-						"Content-Type: text/plain\r\n"
-						"Content-Length: %ld\r\n"
-						"\r\n"
-						"Code 500: Internal Server Error:\n%s\n", strlen(ndc_execbuf) + 37, ndc_execbuf);
-			}
-
-			c = qdb_iter(d->headers, NULL);
-			while (qdb_next(key, &value, &c))
-				unsetenv(env_name(key));
-			if (!d->remaining_len)
-				ndc_close(fd);
+			d->flags &= ~DF_TO_CLOSE;
+			ndc_exec(fd, args, do_GET_cb, body, strlen(body));
+			ndc_exec_loop(fd);
 			return;
 		}
 	} else {

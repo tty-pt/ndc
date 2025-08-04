@@ -84,9 +84,6 @@ int ndc_headers(int fd);
 void ndc_pre_init(struct ndc_config *config_r);
 void ndc_cert_add(char *str);
 void ndc_certs_add(char *fname);
-int ndc_exec(int cfd, char * const args[],
-		cmd_cb_t callback, void *input,
-		size_t input_len);
 
 extern char ndc_execbuf[BUFSIZ * 64];
 extern ndc_log_t ndclog;
