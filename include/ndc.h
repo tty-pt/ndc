@@ -24,13 +24,20 @@ enum ndc_srv_flags {
 	NDC_WAKE = 1,
 	NDC_SSL = 2,
 	NDC_ROOT = 4,
-	/* NDC_CHROOT = 8, */
+	NDC_SSL_ONLY = 8,
 	NDC_DETACH = 16,
 };
+
+enum ndc_req_flags {
+	NDC_POST = 1,
+};
+
+typedef void ndc_handler_t(int cfd, char *body, unsigned flags, unsigned headers);
 
 struct ndc_config {
 	char * chroot;
 	unsigned flags, port, ssl_port;
+	ndc_handler_t *default_handler;
 };
 
 typedef void ndc_cb_t(int fd, int argc, char *argv[]);
@@ -54,6 +61,7 @@ extern long long ndc_tick;
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
 void ndc_init(void);
 int ndc_main(void);
+void ndc_register_handler(char *path, ndc_handler_t *handler);
 
 /* define these */
 extern void ndc_update(unsigned long long dt) __attribute__((weak));

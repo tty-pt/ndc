@@ -49,6 +49,8 @@
 }
 
 #define FIRST_INPUT_SIZE (BUFSIZ * 2)
+#define SELECT_TIMEOUT 10000
+#define EXEC_TIMEOUT 100000
 
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
@@ -91,7 +93,7 @@ extern struct cmd_slot cmds[];
 struct ndc_config config;
 
 static int ndc_srv_flags = 0, srv_ssl_fd = -1, srv_fd = -1;
-static unsigned cmds_hd, mime_hd;
+static unsigned cmds_hd, mime_hd, handler_hd;
 static fd_set fds_read, fds_active;
 long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
@@ -905,7 +907,7 @@ int ndc_main(void) {
 				ndc_write_remaining(i);
 
 		timeout.tv_sec = 0;
-		timeout.tv_usec = 1000;
+		timeout.tv_usec = SELECT_TIMEOUT;
 
 		fds_read = fds_active;
 		int select_n = select(FD_SETSIZE, &fds_read, NULL, NULL, &timeout);
@@ -1175,7 +1177,7 @@ ndc_exec_loop(int cfd) {
 	ssize_t len = 0;
 
 	do {
-		struct timeval timeout = { 0, 1000 };
+		struct timeval timeout = { 0, EXEC_TIMEOUT };
 		int pfd;
 
 		if (!d->pipes_mask)
@@ -1346,14 +1348,10 @@ static void ndc_auth_try(int fd) {
 }
 
 
-inline static char *static_allowed(const char *path) {
+inline static char *static_allowed(const char *path, struct stat *stat_buf) {
 	static char output[BUFSIZ];
-	char *rstart = statics_mmap, *start, *param = strchr(path, '?'), *out = NULL;
-	struct stat stat_buf;
+	char *rstart = statics_mmap, *start, *out = NULL;
 	size_t pos = 0;
-
-	if (param)
-		*param = '\0';
 
 	do {
 		start = ndc_mmap_iter(rstart, &pos);
@@ -1373,7 +1371,7 @@ inline static char *static_allowed(const char *path) {
 			size_t len = snprintf(output, sizeof(output), "../%s/%s", start, path + offset);
 			*glob = aux;
 			if (output[len - 1] != '/') {
-				if (stat(output, &stat_buf))
+				if (stat(output, stat_buf))
 					continue;
 				out = output;
 				break;
@@ -1381,161 +1379,41 @@ inline static char *static_allowed(const char *path) {
 		}
 	} while (pos < statics_len);
 
-	if (param)
-		*param = '?';
-
 	return out;
 }
 
-static void request_handle(int fd, int argc, char *argv[], int post) {
-	char *method = post ? "POST" : "GET";
+static inline void env_prep(struct descr *d,
+		char *document_uri, char *param,
+		char *method, char *ipstr)
+{
+	char key[BUFSIZ], value[BUFSIZ];
+	qdb_cur_t c;
+
+	c = qdb_iter(d->headers, NULL);
+	while (qdb_next(key, &value, &c))
+		setenv(env_name(key), value, 1);
+	char req_content_type[BUFSIZ];
+	if (qdb_get(d->headers, req_content_type, "Content-Type"))
+		strncpy(req_content_type, "text/plain", sizeof(req_content_type));
+	setenv("CONTENT_TYPE", env_sane(req_content_type), 1);
+	setenv("DOCUMENT_URI", document_uri, 1);
+	setenv("QUERY_STRING", env_sane(param), 1);
+	setenv("REQUEST_METHOD", method, 1);
+	setenv("REMOTE_ADDR", ipstr, 1);
+	setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
+}
+
+static inline void static_write(int fd, char *status,
+		char *content_type, int want_fd, off_t total)
+{
 	struct descr *d = &descr_map[fd];
-	size_t body_start;
-	d->headers = headers_get(&body_start, argv[argc]);
-	char buf[BUFSIZ];
-
-	char ipstr[INET_ADDRSTRLEN];
-	inet_ntop(AF_INET, &d->addr.sin_addr, ipstr, sizeof(ipstr));
-	ndclog(LOG_ERR, "%d (%s) %s %s\n", fd, ipstr, method, argv[1]);
-
-	if (!qdb_get(d->headers, buf, "Sec-WebSocket-Key")) {
-		struct io *dio = &io[fd];
-		if (ws_init(fd, buf))
-			return;
-		d->flags |= DF_WEBSOCKET;
-		dio->read = ws_read;
-		dio->write = ws_write;
-		TELNET_CMD(IAC, DO, TELOPT_NAWS);
-		if (!ndc_connect || ndc_connect(fd)) {
-			d->flags |= DF_CONNECTED;
-			pty_open(fd);
-		}
-		return;
-	} else if (argc < 2 || argv[1][0] != '/' || strstr(argv[1], "..")) {
-		ndc_close(fd);
-		return;
-	}
-
-	ndc_auth_try(fd);
-	d->flags |= DF_TO_CLOSE;
-
-	/*
-	if (ndc_srv_flags & NDC_SSL && !d->cSSL) {
-		qdb_get(d->headers, buf, "Host");
-		char response[8285];
-		snprintf(response, sizeof(response),
-				"HTTP/1.1 301 Moved Permanently\r\n"
-				"Location: https://%s/%s\r\n"
-				"Content-Length: 0\r\n"
-				"Connection: close\r\n"
-				"\r\n", buf, argv[1]);
-		ndc_writef(fd, "%s", response);
-		if (!d->remaining_len)
-			ndc_close(fd);
-		return;
-	}
-	*/
-
-	chdir("./htdocs");
-
-	int flags = fcntl(fd, F_GETFL, 0);
-	if (flags == -1) {
-		ndclog(LOG_ERR, "do_%s: fcntl F_GETFL\n", method);
-		goto end;
-	}
-
-	flags |= O_SYNC;
-
-	if (fcntl(fd, F_SETFL, flags) == -1) {
-		ndclog(LOG_ERR, "do_%s: fcntl F_SETFL\n", method);
-		goto end;
-	}
-
-	static char *content_type = "text/plain";
-	char *status = "200 OK";
-	struct stat stat_buf;
-	char filename[64], *alt = "../.index";
-	char *body = argv[argc] + body_start + 1;
-	off_t total = 0;
-	int want_fd = -1, lost = 1;
-	*filename = '\0';
-
-	if (argv[1][0] == '/' && argv[1][1] == '/')
-		argv[1]++;
-
-	if (lost)
-		snprintf(filename, 64, ".%s", argv[1]);
-
-	url_decode(filename);
-
-	char *statical = static_allowed(filename + 1);
-	if (statical)
-		strlcpy(filename, statical, sizeof(filename));
-
-	if (!argv[1][1] || stat(filename, &stat_buf)) {
-		if (stat(alt, &stat_buf)) {
-			status = "404 Not Found";
-			total = strlen(status);
-		} else if (access(alt, X_OK) != 0) {
-			status = "403 Forbidden";
-			total = strlen(status);
-		} else {
-			char * args[2] = { NULL, NULL };
-			char uribuf[BUFSIZ];
-			char * query_string = strchr(argv[1], '?');
-			char key[BUFSIZ], value[BUFSIZ];
-			qdb_cur_t c;
-			memcpy(uribuf, argv[1], sizeof(uribuf));
-			query_string = strchr(uribuf, '?');
-			if (query_string)
-				*query_string++ = '\0';
-			else
-				query_string = "";
-			args[0] = alt + 1;
-			c = qdb_iter(d->headers, NULL);
-			while (qdb_next(key, &value, &c))
-				setenv(env_name(key), value, 1);
-			char req_content_type[BUFSIZ];
-			if (qdb_get(d->headers, req_content_type, "Content-Type"))
-				strncpy(req_content_type, "text/plain", sizeof(req_content_type));
-			setenv("CONTENT_TYPE", env_sane(req_content_type), 1);
-			setenv("DOCUMENT_URI", uribuf, 1);
-			setenv("QUERY_STRING", env_sane(query_string), 1);
-			setenv("SCRIPT_NAME", alt, 1);
-			setenv("REQUEST_METHOD", method, 1);
-			setenv("REMOTE_ADDR", ipstr, 1);
-			setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
-			chdir("..");
-			ndc_writef(fd, "HTTP/1.1 ");
-			d->flags &= ~DF_TO_CLOSE;
-			ndc_exec(fd, args, do_GET_cb, body, strlen(body));
-			ndc_exec_loop(fd);
-			return;
-		}
-	} else {
-		errno = 0;
-		char *ext = filename, *s;
-		for (s = ext; *s; s++)
-			if (*s == '.')
-				ext = s + 1;
-
-		content_type = "application/octet-stream";
-		if (ext) {
-			memset(buf, 0, sizeof(buf));
-			if (!qdb_get(mime_hd, buf, ext))
-				content_type = buf;
-		}
-
-		want_fd = open(filename, O_RDONLY);
-		total = stat_buf.st_size;
-
-	}
-
 	time_t now = time(NULL);
 	struct tm *tm_info = gmtime(&now);
 	char date[100];
-	strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 
+	d->flags |= DF_TO_CLOSE;
+
+	strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 	ndc_writef(fd, "HTTP/1.1 %s\r\n"
 			"Date: %s\r\n"
 			"Server: ndc/0.0.1 (Unix)\r\n"
@@ -1560,10 +1438,180 @@ static void request_handle(int fd, int argc, char *argv[], int post) {
 
 	close(want_fd);
 
-end:
-	chdir("..");
-	if (!d->remaining_len)
+end:	if (!d->remaining_len)
 		ndc_close(fd);
+}
+
+static inline int request_handle_static(int fd, char *filename, struct stat *stat_buf) {
+	char buf[BUFSIZ];
+	errno = 0;
+	char *ext = filename, *s;
+	char *content_type;
+
+	if (!filename)
+		return 0;
+
+	for (s = ext; *s; s++)
+		if (*s == '.')
+			ext = s + 1;
+
+	content_type = "application/octet-stream";
+	if (ext) {
+		memset(buf, 0, sizeof(buf));
+		if (!qdb_get(mime_hd, buf, ext))
+			content_type = buf;
+	}
+
+	static_write(fd, "200 OK", content_type,
+			open(filename, O_RDONLY),
+			stat_buf->st_size);
+
+	return 1;
+}
+
+static inline int request_handle_websocket(int fd) {
+	struct descr *d = &descr_map[fd];
+	char buf[BUFSIZ];
+
+	if (qdb_get(d->headers, buf, "Sec-WebSocket-Key"))
+		return 0;
+
+	struct io *dio = &io[fd];
+	if (ws_init(fd, buf))
+		return -1;
+
+	d->flags |= DF_WEBSOCKET;
+	dio->read = ws_read;
+	dio->write = ws_write;
+	TELNET_CMD(IAC, DO, TELOPT_NAWS);
+	if (!ndc_connect || ndc_connect(fd)) {
+		d->flags |= DF_CONNECTED;
+		pty_open(fd);
+	}
+
+	return 1;
+}
+
+static inline void request_handle_cgi(int fd, char *document_uri,
+		char *param, char *method, char *ipstr,
+		struct stat *stat_buf, char *body)
+{
+	struct descr *d = &descr_map[fd];
+	char *cgi_index = "./index.sh";
+
+	if (stat(cgi_index, stat_buf) || access(cgi_index, X_OK)) {
+		char *status = "404 Not Found";
+		static_write(fd, status, "text/plain",
+				-1, strlen(status));
+	} else {
+		char * args[2] = { cgi_index, NULL };
+		env_prep(d, document_uri, param,
+				method, ipstr);
+		setenv("SCRIPT_NAME", cgi_index + 1, 1);
+		ndc_writef(fd, "HTTP/1.1 ");
+		d->flags &= ~DF_TO_CLOSE;
+		ndc_exec(fd, args, do_GET_cb, body, strlen(body));
+		ndc_exec_loop(fd);
+		return;
+	}
+}
+
+static inline int request_handle_redirect(int fd, char *document_uri) {
+	struct descr *d = &descr_map[fd];
+	d->flags = DF_TO_CLOSE;
+
+	if ((ndc_srv_flags & NDC_SSL_ONLY)
+			&& (ndc_srv_flags & NDC_SSL)
+			&& !d->cSSL)
+	{
+		char host[256];
+		qdb_get(d->headers, host, "Host");
+		char response[8285];
+
+		snprintf(response, sizeof(response),
+				"HTTP/1.1 301 Moved Permanently\r\n"
+				"Location: https://%s/%s\r\n"
+				"Content-Length: 0\r\n"
+				"Connection: close\r\n"
+				"\r\n", host, document_uri);
+		ndc_writef(fd, "%s", response);
+
+		if (!d->remaining_len)
+			ndc_close(fd);
+
+		return 1;
+	}
+
+	return 0;
+}
+
+static void request_handle(int fd, int argc, char *argv[], int req_flags) {
+	char *method;
+	struct descr *d = &descr_map[fd];
+	size_t body_start;
+	d->headers = headers_get(&body_start, argv[argc]);
+	char document_uri[BUFSIZ], *param;
+	ndc_handler_t *handler;
+	struct stat stat_buf;
+
+	if (req_flags & NDC_POST)
+		method = "POST";
+	else
+		method = "GET";
+
+	char ipstr[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &d->addr.sin_addr, ipstr, sizeof(ipstr));
+	ndclog(LOG_ERR, "%d (%s) %s %s\n", fd, ipstr, method, argv[1]);
+
+	if (argc < 2 || argv[1][0] != '/' || strstr(argv[1], "..")) {
+		// you wish
+		ndc_close(fd);
+		return;
+	}
+
+	strlcpy(document_uri, argv[1], sizeof(document_uri));
+	url_decode(document_uri);
+
+	param = strchr(document_uri, '?');
+	if (param)
+		*param ++ = '\0';
+	else
+		param = "";
+
+	char *filename = static_allowed(document_uri, &stat_buf);
+	if (request_handle_static(fd, filename, &stat_buf))
+		return;
+
+	ndc_auth_try(fd);
+
+	if (request_handle_websocket(fd))
+		return;
+
+	if (request_handle_redirect(fd, document_uri))
+		return;
+
+	char *body = argv[argc] + body_start + 1;
+
+	if (!qdb_get(handler_hd, (void *) &handler, document_uri)) {
+		env_prep(d, document_uri, param,
+				method, ipstr);
+		handler(fd, body, req_flags, d->headers);
+		return;
+	}
+
+	if (config.default_handler) {
+		env_prep(d, document_uri, param,
+				method, ipstr);
+		handler(fd, body, req_flags, d->headers);
+		return;
+	}
+
+	request_handle_cgi(fd, document_uri, param, method,
+			ipstr, &stat_buf, body);
+}
+
+void ndc_register_handler(char *path, ndc_handler_t *handler) {
+	qdb_put(handler_hd, path, &handler);
 }
 
 void
@@ -1575,7 +1623,7 @@ do_GET(int fd, int argc, char *argv[])
 void
 do_POST(int fd, int argc, char *argv[])
 {
-	request_handle(fd, argc, argv, 1);
+	request_handle(fd, argc, argv, NDC_POST);
 }
 
 int ndc_flags(int fd) {
@@ -1600,12 +1648,16 @@ void ndc_pre_init(struct ndc_config *config_r) {
 
 	qdb_reg("cmd", sizeof(struct cmd_slot));
 
+	/* FIXME a lot of string querying in here.
+	 * how about qdb supports that without libdb?
+	 */
 	ssl_certs = qdb_open(NULL, "u", "s", QH_AINDEX);
 	ssl_keys = qdb_open(NULL, "u", "s", 0);
 	ssl_contexts = qdb_open(NULL, "u", "p", 0);
 	ssl_domains = qdb_open(NULL, "s", "u", 0);
 	cmds_hd = qdb_open(NULL, "s", "cmd", 0);
 	mime_hd = qdb_open(NULL, "s", "s", 0);
+	handler_hd = qdb_open(NULL, "s", "p", 0);
 }
 
 void _ndc_cert_add(char *domain, char *crt, char *key) {
