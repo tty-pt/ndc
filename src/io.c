@@ -57,6 +57,8 @@ static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
 static unsigned ssl_certs, ssl_keys, ssl_domains, ssl_contexts;
 static char *statics_mmap;
 static size_t statics_len = 0;
+static char *cgi_index = "./index.sh";
+struct passwd *ndc_pw;
 
 struct io io[FD_SETSIZE];
 
@@ -66,7 +68,7 @@ struct descr {
 	char username[BUFSIZ];
 	struct winsize wsz;
 	struct termios tty;
-	unsigned headers;
+	unsigned headers, env;
 	char *remaining;
 	struct sockaddr_in addr;
 	size_t remaining_size, remaining_len;
@@ -74,6 +76,7 @@ struct descr {
 	int pipes[3], pipes_mask;
 	cmd_cb_t callback;
 	size_t total;
+	struct passwd *pw;
 } descr_map[FD_SETSIZE];
 
 struct cmd {
@@ -99,8 +102,6 @@ long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
-
-char ndc_execbuf[BUFSIZ * 64];
 
 static void
 ndc_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
@@ -147,6 +148,7 @@ ndc_close(int fd)
 	}
 	if (d->headers)
 		qdb_close(d->headers, 0);
+	qdb_close(d->env, 0);
 	shutdown(fd, 2);
 	close(fd);
 	FD_CLR(fd, &fds_active);
@@ -333,7 +335,16 @@ static void descr_new(int ssl) {
 	d->remaining_size = BUFSIZ * 64;
 	d->remaining = malloc(d->remaining_size);
 	d->epid = 0;
+
 	dio->write = ndc_low_write;
+
+	d->env = qdb_open("req_env", "s", "s", QH_TMP);
+	qdb_put(d->env, "PATH", "/bin:/usr/bin:/usr/local/bin");
+	qdb_put(d->env, "LD_LIBRARY_PATH", "/lib:/usr/lib:/usr/local/lib");
+
+	char ipstr[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &d->addr.sin_addr, ipstr, sizeof(ipstr));
+	qdb_put(d->env, "REMOTE_ADDR", ipstr);
 
 	errno = 0;
 	if (ssl) {
@@ -642,14 +653,14 @@ static inline void descr_proc_writes(void) {
 	for (register int i = 0; i < FD_SETSIZE; i++) {
 		struct descr *d = &descr_map[i];
 
-		if (d->remaining_len)
-			ndc_write_remaining(i);
-
 		if (!FD_ISSET(i, &fds_active)
 				|| i == srv_fd
 				|| i == srv_ssl_fd
 				|| d->pty == -2)
 			continue;
+
+		if (d->remaining_len)
+			ndc_write_remaining(i);
 
 		// i is not a pty fd!
 		if (d->epid)
@@ -832,6 +843,10 @@ char *ndc_mmap_iter(char *start, size_t *pos_r) {
 void ndc_init(void) {
 	ndc_srv_flags |= config.flags | NDC_WAKE;
 
+	char euname[BUFSIZ];
+	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
+	ndc_pw = getpwnam(euname);
+
 	if (ndc_srv_flags & NDC_SSL) {
 
 		SSL_load_error_strings();
@@ -935,21 +950,16 @@ int ndc_main(void) {
 
 static struct passwd *drop_priviledges(int fd) {
 	struct descr *d = &descr_map[fd];
-	char euname[BUFSIZ];
-	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
 
-	struct passwd *pw = getpwnam((d->flags & DF_AUTHENTICATED) ? d->username : euname);
+	struct passwd *pw = d->pw ? d->pw : ndc_pw;
 
 	if (!config.chroot) {
-		ndclog(LOG_INFO, "NOT_CHROOTED - running with %s\n", euname);
+		ndclog(LOG_INFO, "NOT_CHROOTED - running with %s\n", pw->pw_name);
 		return pw;
 	}
 	
 	if (!pw)
 		ndclog_err("drop_priviledges getpwnam\n");
-
-	uid_t new_uid = pw->pw_uid;
-	gid_t new_gid = pw->pw_gid;
 
 	if (setgroups(0, NULL) != 0)
 		ndclog_err("drop_priviledges setgroups\n");
@@ -957,21 +967,49 @@ static struct passwd *drop_priviledges(int fd) {
 	if (initgroups(pw->pw_name, pw->pw_gid))
 		ndclog_err("drop_priviledges initgroups\n");
 
-	if (setgid(new_gid) != 0)
+	if (setgid(pw->pw_gid) != 0)
 		ndclog_err("drop_priviledges setgid\n");
 
-	if (setuid(new_uid) != 0)
+	if (setuid(pw->pw_uid) != 0)
 		ndclog_err("drop_priviledges setuid");
 
-	if (
-			setenv("HOME", pw->pw_dir, 1) != 0
-			|| setenv("USER", pw->pw_name, 1) != 0
-			|| setenv("SHELL", pw->pw_shell, 1) != 0
-			|| setenv("PATH", "/bin:/usr/bin:/usr/local/bin", 1) != 0
-			|| setenv("LD_LIBRARY_PATH", "/lib:/usr/lib:/usr/local/lib", 1) != 0)
-		ndclog_err("drop_priviledges setenv");
-
 	return pw;
+}
+
+static inline char *env_item(char *name, char *value) {
+	size_t len = strlen(name) + strlen(value) + 2;
+	char *env_item = malloc(len);
+	snprintf(env_item, len, "%s=%s", name, value);
+	return env_item;
+}
+
+static inline char **env_prep(struct descr *d)
+{
+	char **env;
+	char key[BUFSIZ], value[BUFSIZ];
+	qdb_cur_t c;
+	size_t count = 0;
+	int i = 0;
+
+	c = qdb_iter(d->env, NULL);
+	while (qdb_next(key, &value, &c))
+		count++;
+
+	env = malloc(count * sizeof(char *));
+
+	c = qdb_iter(d->env, NULL);
+	while (qdb_next(key, &value, &c))
+		env[i++] = env_item(key, value);
+
+	env[i] = NULL;
+
+	return env;
+}
+
+static inline void env_free(char **env) {
+	for (int i = 0; env[i]; i++)
+		free(env[i]);
+	free(env);
 }
 
 inline static int
@@ -1026,7 +1064,7 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		char *alt_args[] = { pw->pw_shell, NULL };
 		char * const *real_args = args[0] ? args : alt_args;
 
-		execvp(real_args[0], real_args);
+		execve(real_args[0], real_args, env_prep(d));
 		ndclog_err("execvp\n");
 		_exit(127);
 	}
@@ -1093,7 +1131,7 @@ headers_get(size_t *body_start, char *next_lines)
 }
 
 static inline int
-popen2(int cfd, char * const args[])
+popen2(int cfd, char * const args[], char * const env[])
 {
 	struct descr *d = &descr_map[cfd];
 	pid_t p = -1;
@@ -1112,8 +1150,8 @@ popen2(int cfd, char * const args[])
 		close(pipe_stderr[0]);
 		dup2(pipe_stderr[1], 2);
 		setpgid(0, 0);
-		execvp(args[0], args);
-		ndclog_err("popen2: execvp\n");
+		execve(args[0], args, env);
+		ndclog_err("popen2: execve\n");
 		_exit(127);
 	}
 
@@ -1133,6 +1171,8 @@ ssize_t cb_proc(
 		cmd_cb_t callback
 		)
 {
+	char ndc_execbuf[BUFSIZ * 64];
+
 	struct descr *d = &descr_map[fd];
 	memset(ndc_execbuf, 0, sizeof(ndc_execbuf));
 	ssize_t len;
@@ -1239,6 +1279,7 @@ ndc_exec_loop(int cfd) {
 	} while (d->pipes_mask);
 
 	if (d->total == 0) {
+		char ndc_execbuf[BUFSIZ * 64];
 		read(d->pipes[2], ndc_execbuf, sizeof(ndc_execbuf) - 1);
 		ndclog(LOG_ERR, "%s\n", ndc_execbuf);
 		ndc_writef(cfd, "500 Internal Server Error\r\n"
@@ -1258,7 +1299,6 @@ ndc_exec_loop(int cfd) {
 	waitpid(d->epid, NULL, 0);
 	d->epid = 0;
 
-
 	char key[BUFSIZ], value[BUFSIZ];
 	qdb_cur_t c = qdb_iter(d->headers, NULL);
 	while (qdb_next(key, &value, &c))
@@ -1269,11 +1309,11 @@ ndc_exec_loop(int cfd) {
 }
 
 void
-ndc_exec(int cfd, char * const args[], cmd_cb_t callback, void *input, size_t input_len) {
+ndc_exec(int cfd, char * const args[], char * const env[], cmd_cb_t callback, void *input, size_t input_len) {
 	struct descr *d = &descr_map[cfd];
 	int flags;
 
-	d->epid = popen2(cfd, args); // should assert it doesn't equal 0
+	d->epid = popen2(cfd, args, env); // should assert it doesn't equal 0
 	d->pipes_mask = 3;
 
 	flags = fcntl(d->pipes[1], F_GETFL, 0);
@@ -1382,25 +1422,29 @@ inline static char *static_allowed(const char *path, struct stat *stat_buf) {
 	return out;
 }
 
-static inline void env_prep(struct descr *d,
+static void _env_prep(struct descr *d,
 		char *document_uri, char *param,
-		char *method, char *ipstr)
+		char *method)
 {
 	char key[BUFSIZ], value[BUFSIZ];
 	qdb_cur_t c;
 
 	c = qdb_iter(d->headers, NULL);
-	while (qdb_next(key, &value, &c))
-		setenv(env_name(key), value, 1);
+	while (qdb_next(key, value, &c)) {
+		char *name = env_name(key);
+		qdb_put(d->env, name, value);
+	}
+
 	char req_content_type[BUFSIZ];
 	if (qdb_get(d->headers, req_content_type, "Content-Type"))
 		strncpy(req_content_type, "text/plain", sizeof(req_content_type));
-	setenv("CONTENT_TYPE", env_sane(req_content_type), 1);
-	setenv("DOCUMENT_URI", document_uri, 1);
-	setenv("QUERY_STRING", env_sane(param), 1);
-	setenv("REQUEST_METHOD", method, 1);
-	setenv("REMOTE_ADDR", ipstr, 1);
-	setenv("DOCUMENT_ROOT", geteuid() ? config.chroot : "", 1);
+	qdb_put(d->env, "CONTENT_TYPE", env_sane(req_content_type));
+
+	qdb_put(d->env, "DOCUMENT_URI", document_uri);
+	qdb_put(d->env, "QUERY_STRING", env_sane(param));
+	qdb_put(d->env, "REQUEST_METHOD", method);
+	qdb_put(d->env, "DOCUMENT_ROOT", geteuid() ? config.chroot : "");
+	qdb_put(d->env, "SCRIPT_NAME", cgi_index + 1);
 }
 
 static inline void static_write(int fd, char *status,
@@ -1492,12 +1536,10 @@ static inline int request_handle_websocket(int fd) {
 	return 1;
 }
 
-static inline void request_handle_cgi(int fd, char *document_uri,
-		char *param, char *method, char *ipstr,
-		struct stat *stat_buf, char *body)
+static inline void
+request_handle_cgi(int fd, struct stat *stat_buf, char *body)
 {
 	struct descr *d = &descr_map[fd];
-	char *cgi_index = "./index.sh";
 
 	if (stat(cgi_index, stat_buf) || access(cgi_index, X_OK)) {
 		char *status = "404 Not Found";
@@ -1505,12 +1547,13 @@ static inline void request_handle_cgi(int fd, char *document_uri,
 				-1, strlen(status));
 	} else {
 		char * args[2] = { cgi_index, NULL };
-		env_prep(d, document_uri, param,
-				method, ipstr);
-		setenv("SCRIPT_NAME", cgi_index + 1, 1);
+		char **env = env_prep(d);
 		ndc_writef(fd, "HTTP/1.1 ");
 		d->flags &= ~DF_TO_CLOSE;
-		ndc_exec(fd, args, do_GET_cb, body, strlen(body));
+
+		ndc_exec(fd, args, env, do_GET_cb, body, strlen(body));
+		env_free(env);
+
 		ndc_exec_loop(fd);
 		return;
 	}
@@ -1592,22 +1635,19 @@ static void request_handle(int fd, int argc, char *argv[], int req_flags) {
 
 	char *body = argv[argc] + body_start + 1;
 
+	_env_prep(d, document_uri, param, method);
+
 	if (!qdb_get(handler_hd, (void *) &handler, document_uri)) {
-		env_prep(d, document_uri, param,
-				method, ipstr);
-		handler(fd, body, req_flags, d->headers);
+		handler(fd, body, d->env);
 		return;
 	}
 
 	if (config.default_handler) {
-		env_prep(d, document_uri, param,
-				method, ipstr);
-		handler(fd, body, req_flags, d->headers);
+		handler(fd, body, d->env);
 		return;
 	}
 
-	request_handle_cgi(fd, document_uri, param, method,
-			ipstr, &stat_buf, body);
+	request_handle_cgi(fd, &stat_buf, body);
 }
 
 void ndc_register_handler(char *path, ndc_handler_t *handler) {
@@ -1639,6 +1679,10 @@ void ndc_auth(int fd, char *username) {
 	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
+	d->pw = getpwnam(d->username);
+	qdb_put(d->env, "HOME", d->pw->pw_dir);
+	qdb_put(d->env, "USER", d->pw->pw_name);
+	qdb_put(d->env, "SHELL", d->pw->pw_shell);
 }
 
 void ndc_pre_init(struct ndc_config *config_r) {

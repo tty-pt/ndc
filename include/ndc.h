@@ -32,7 +32,7 @@ enum ndc_req_flags {
 	NDC_POST = 1,
 };
 
-typedef void ndc_handler_t(int cfd, char *body, unsigned flags, unsigned headers);
+typedef void ndc_handler_t(int cfd, char *body, unsigned env);
 
 struct ndc_config {
 	char * chroot;
