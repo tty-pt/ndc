@@ -22,7 +22,7 @@ function create(element, options = {}) {
     allowProposedApi: true,
   });
 
-  const ws = new WebSocket(url, 'binary');
+  let ws = new WebSocket(url, 'binary');
   ws.binaryType = 'arraybuffer';
 
   let sub = options.sub;
@@ -116,7 +116,7 @@ function create(element, options = {}) {
   function onClose() {
     sub.onClose(sub);
 
-    disconnect();
+    ws = ws.onclose = ws.onmessage = ws.onopen = null;
     term.dispose();
 
     // reconnect
@@ -133,15 +133,9 @@ function create(element, options = {}) {
     };
   }
 
-  ws.addEventListener('open', onOpen);
-  ws.addEventListener('message', onMessage);
-  ws.addEventListener('close', onClose);
-
-  function disconnect() {
-    ws.removeEventListener('open', onOpen);
-    ws.removeEventListener('message', onMessage);
-    ws.removeEventListener('close', onClose);
-  }
+  ws.onopen = onOpen;
+  ws.onmessage = onMessage;
+  ws.onclose = onClose;
 
   function resize(cols, rows) {
     const IAC = 255;

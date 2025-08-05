@@ -88,7 +88,7 @@ int ndc_flags(int fd);
 void ndc_close(int fd);
 void ndc_set_flags(int fd, int flags);
 void ndc_auth(int fd, char *username);
-int ndc_headers(int fd);
+unsigned ndc_env(int fd);
 void ndc_pre_init(struct ndc_config *config_r);
 void ndc_cert_add(char *str);
 void ndc_certs_add(char *fname);
