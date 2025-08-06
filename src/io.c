@@ -54,11 +54,11 @@
 
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
-static unsigned ssl_certs, ssl_keys, ssl_domains, ssl_contexts;
+static unsigned ssl_certs, ssl_keys, ssl_domains, ssl_contexts, env_hd;
 static char *statics_mmap;
 static size_t statics_len = 0;
 static char *cgi_index = "./index.sh";
-struct passwd *ndc_pw;
+struct passwd ndc_pw;
 
 struct io io[FD_SETSIZE];
 
@@ -76,7 +76,7 @@ struct descr {
 	int pipes[3], pipes_mask;
 	cmd_cb_t callback;
 	size_t total;
-	struct passwd *pw;
+	struct passwd pw;
 } descr_map[FD_SETSIZE];
 
 struct cmd {
@@ -97,7 +97,7 @@ struct ndc_config config;
 
 static int ndc_srv_flags = 0, srv_ssl_fd = -1, srv_fd = -1;
 static unsigned cmds_hd, mime_hd, handler_hd;
-static fd_set fds_read, fds_active;
+static fd_set fds_read, fds_active, fds_write, fds_wactive;
 long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
@@ -113,6 +113,11 @@ ndc_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
 }
 
 ndc_log_t ndclog = ndc_logger_stderr;
+
+void
+ndc_env_clear(int fd) {
+	qdb_del(env_hd, &fd, NULL);
+}
 
 void
 ndc_close(int fd)
@@ -146,11 +151,13 @@ ndc_close(int fd)
 		SSL_free(d->cSSL);
 		d->cSSL = NULL;
 	}
-	qdb_close(d->env, 0);
 	shutdown(fd, 2);
 	close(fd);
 	FD_CLR(fd, &fds_active);
 	FD_CLR(fd, &fds_read);
+	FD_CLR(fd, &fds_wactive);
+	FD_CLR(fd, &fds_write);
+	ndc_env_clear(fd);
 	d->fd = -1;
 	memset(d, 0, sizeof(struct descr));
 }
@@ -309,6 +316,14 @@ ndc_low_write(int fd, void *from, size_t len)
 	return ret;
 }
 
+int
+ndc_env_put(int fd, char *key, char *value) {
+	size_t len = strlen(key) + strlen(value) + 2;
+	char env_item[ENV_LEN];
+	snprintf(env_item, len, "%s=%s", key, value);
+	return qdb_put(env_hd, &fd, env_item);
+}
+
 static void descr_new(int ssl) {
 	struct sockaddr_in addr;
 	socklen_t addr_len = (socklen_t)sizeof(addr);
@@ -318,8 +333,6 @@ static void descr_new(int ssl) {
 
 	if (fd <= 0)
 		return;
-
-	/* fprintf(stderr, "descr_new %d\n", fd); */
 
 	FD_SET(fd, &fds_active);
 
@@ -336,11 +349,9 @@ static void descr_new(int ssl) {
 
 	dio->write = ndc_low_write;
 
-	d->env = qdb_open("req_env", "s", "s", QH_TMP);
-
 	char ipstr[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &d->addr.sin_addr, ipstr, sizeof(ipstr));
-	qdb_put(d->env, "REMOTE_ADDR", ipstr);
+	ndc_env_put(fd, "REMOTE_ADDR", ipstr);
 
 	errno = 0;
 	if (ssl) {
@@ -652,7 +663,7 @@ static inline void descr_proc_writes(void) {
 		if (!(d->flags & DF_ACCEPTED) && d->cSSL)
 			ssl_accept(i);
 
-		if (!FD_ISSET(i, &fds_active)
+		if (!FD_ISSET(i, &fds_write)
 				|| i == srv_fd
 				|| i == srv_ssl_fd
 				|| d->pty == -2)
@@ -836,12 +847,26 @@ char *ndc_mmap_iter(char *start, size_t *pos_r) {
 	return line;
 }
 
+void pw_copy(struct passwd *target, struct passwd *origin) {
+	*target = *origin;
+	target->pw_name = strdup(origin->pw_name);
+	target->pw_shell = strdup(origin->pw_shell);
+	target->pw_dir = strdup(origin->pw_dir);
+	target->pw_class = target->pw_passwd = NULL;
+}
+
+void pw_free(struct passwd *target) {
+	free(target->pw_name);
+	free(target->pw_shell);
+	free(target->pw_dir);
+}
+
 void ndc_init(void) {
 	ndc_srv_flags |= config.flags | NDC_WAKE;
 
 	char euname[BUFSIZ];
 	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
-	ndc_pw = getpwnam(euname);
+	pw_copy(&ndc_pw, getpwnam(euname));
 
 	if (ndc_srv_flags & NDC_SSL) {
 
@@ -921,7 +946,8 @@ int ndc_main(void) {
 		timeout.tv_usec = SELECT_TIMEOUT;
 
 		fds_read = fds_active;
-		int select_n = select(FD_SETSIZE, &fds_read, NULL, NULL, &timeout);
+		fds_write = fds_wactive;
+		int select_n = select(FD_SETSIZE, &fds_read, &fds_write, NULL, &timeout);
 		descr_proc_writes();
 
 		switch (select_n) {
@@ -947,7 +973,8 @@ int ndc_main(void) {
 static struct passwd *drop_priviledges(int fd) {
 	struct descr *d = &descr_map[fd];
 
-	struct passwd *pw = d->pw ? d->pw : ndc_pw;
+	struct passwd *pw = (d->flags & DF_AUTHENTICATED)
+		? &d->pw : &ndc_pw;
 
 	if (!config.chroot) {
 		ndclog(LOG_INFO, "NOT_CHROOTED - running with %s\n", pw->pw_name);
@@ -972,30 +999,23 @@ static struct passwd *drop_priviledges(int fd) {
 	return pw;
 }
 
-static inline char *env_item(char *name, char *value) {
-	size_t len = strlen(name) + strlen(value) + 2;
-	char *env_item = malloc(len);
-	snprintf(env_item, len, "%s=%s", name, value);
-	return env_item;
-}
-
-static inline char **env_prep(struct descr *d)
+static inline char **env_prep(int fd)
 {
 	char **env;
-	char key[BUFSIZ], value[BUFSIZ];
+	char envstr[ENV_LEN];
 	qdb_cur_t c;
 	size_t count = 0;
 	int i = 0;
 
-	c = qdb_iter(d->env, NULL);
-	while (qdb_next(key, value, &c))
+	c = qdb_iter(env_hd, &fd);
+	while (qdb_next(&fd, envstr, &c))
 		count++;
 
 	env = malloc(count * sizeof(char *));
 
-	c = qdb_iter(d->env, NULL);
-	while (qdb_next(key, value, &c))
-		env[i++] = env_item(key, value);
+	c = qdb_iter(env_hd, &fd);
+	while (qdb_next(&fd, envstr, &c))
+		env[i++] = strdup(envstr);
 
 	env[i] = NULL;
 
@@ -1060,9 +1080,9 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		char *alt_args[] = { pw->pw_shell, NULL };
 		char * const *real_args = args[0] ? args : alt_args;
 		char home[BUFSIZ], user[BUFSIZ], shell[BUFSIZ];
-		snprintf(home, sizeof(home), "HOME=%s", d->pw->pw_dir);
-		snprintf(user, sizeof(user), "USER=%s", d->pw->pw_name);
-		snprintf(shell, sizeof(shell), "SHELL=%s", d->pw->pw_shell);
+		snprintf(home, sizeof(home), "HOME=%s", d->pw.pw_dir);
+		snprintf(user, sizeof(user), "USER=%s", d->pw.pw_name);
+		snprintf(shell, sizeof(shell), "SHELL=%s", d->pw.pw_shell);
 
 		char * const env[] = {
 			"PATH=/bin:/usr/bin:/usr/local/bin",
@@ -1119,7 +1139,7 @@ static char *env_name(char *key) {
 }
 
 static inline void
-headers_get(struct descr *d, size_t *body_start, char *next_lines)
+headers_get(int fd, size_t *body_start, char *next_lines)
 {
 	void *prenv = qdb_config.env;
 	qdb_config.env = NULL;
@@ -1136,7 +1156,7 @@ headers_get(struct descr *d, size_t *body_start, char *next_lines)
 			if (s != key) {
 				if (s - key >= BUFSIZ)
 					*(key + BUFSIZ - 1) = '\0';
-				qdb_put(d->env, env_name(key), value);
+				ndc_env_put(fd, env_name(key), value);
 				key = s += 2;
 			} else
 				*++s = '\0';
@@ -1157,7 +1177,10 @@ popen2(int cfd, char * const args[], char * const env[])
 	pid_t p = -1;
 	int pipe_stdin[2], pipe_stdout[2], pipe_stderr[2];
 
-	if (pipe(pipe_stdin) || pipe(pipe_stdout) || pipe(pipe_stderr) || (p = fork()) < 0)
+	if (pipe(pipe_stdin) \
+			|| pipe(pipe_stdout) \
+			|| pipe(pipe_stderr) \
+			|| (p = fork()) < 0)
 		return p;
 
 	if(p == 0) { /* child */
@@ -1170,6 +1193,7 @@ popen2(int cfd, char * const args[], char * const env[])
 		close(pipe_stderr[0]);
 		dup2(pipe_stderr[1], 2);
 		setpgid(0, 0);
+
 		execve(args[0], args, env);
 		ndclog_err("popen2: execve\n");
 		_exit(127);
@@ -1225,11 +1249,14 @@ ndc_exec_loop(int cfd) {
 	do {
 		struct timeval timeout = { 0, EXEC_TIMEOUT };
 		int pfd;
+		time_t dt;
 
 		if (!d->pipes_mask)
 			break;
 
-		if (time(NULL) - d->sor >= total_timeout) {
+		dt = time(NULL) - d->sor;
+
+		if (dt >= total_timeout) {
 			ndc_writef(cfd, "504 Gateway Timeout\r\n"
 					"Content-Type: text/plain\r\n"
 					"Content-Length: 26\r\n"
@@ -1304,6 +1331,8 @@ ndc_exec_loop(int cfd) {
 	kill(-d->epid, SIGKILL);
 	waitpid(d->epid, NULL, 0);
 	d->epid = 0;
+	memset(d->pipes, 0, sizeof(d->pipes));
+	FD_CLR(cfd, &fds_wactive);
 
 	if (!d->remaining_len)
 		ndc_close(cfd);
@@ -1331,7 +1360,7 @@ ndc_exec(int cfd, char * const args[], char * const env[], cmd_cb_t callback, vo
 	d->sor = time(NULL);
 	d->total = 0;
 	d->callback = callback;
-	FD_SET(cfd, &fds_active);
+	FD_SET(cfd, &fds_wactive);
 }
 
 void do_GET_cb(
@@ -1364,11 +1393,6 @@ static void url_decode(char *str) {
     }
 
     *dst = '\0';
-}
-
-unsigned ndc_env(int fd) {
-	struct descr *d = &descr_map[fd];
-	return d->env;
 }
 
 static char *env_sane(char *str) {
@@ -1425,20 +1449,41 @@ inline static char *static_allowed(const char *path, struct stat *stat_buf) {
 	return out;
 }
 
-static void _env_prep(struct descr *d,
+int ndc_env_get(int fd, char *target, char *key) {
+	qdb_cur_t c = qdb_iter(env_hd, &fd);
+	char envstr[BUFSIZ];
+
+	while (qdb_next(&fd, envstr, &c)) {
+		char *equals = strchr(envstr, '=');
+
+		if (!equals)
+			continue;
+
+		if (!strncmp(envstr, key, equals - envstr)) {
+			strlcpy(target, equals + 1, ENV_KEY_LEN);
+			qdb_fin(&c);
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+static void _env_prep(int fd,
 		char *document_uri, char *param,
 		char *method)
 {
 	char req_content_type[BUFSIZ];
-	if (qdb_get(d->env, req_content_type, "HTTP_CONTENT_TYPE"))
+	if (ndc_env_get(fd, req_content_type, "HTTP_CONTENT_TYPE"))
 		strncpy(req_content_type, "text/plain", sizeof(req_content_type));
 
-	qdb_put(d->env, "CONTENT_TYPE", env_sane(req_content_type));
-	qdb_put(d->env, "DOCUMENT_URI", document_uri);
-	qdb_put(d->env, "QUERY_STRING", env_sane(param));
-	qdb_put(d->env, "REQUEST_METHOD", method);
-	qdb_put(d->env, "DOCUMENT_ROOT", geteuid() ? config.chroot : "");
-	qdb_put(d->env, "SCRIPT_NAME", cgi_index + 1);
+	ndc_env_put(fd, "CONTENT_TYPE", env_sane(req_content_type));
+	ndc_env_put(fd, "CONTENT_TYPE", env_sane(req_content_type));
+	ndc_env_put(fd, "DOCUMENT_URI", document_uri);
+	ndc_env_put(fd, "QUERY_STRING", env_sane(param));
+	ndc_env_put(fd, "REQUEST_METHOD", method);
+	ndc_env_put(fd, "DOCUMENT_ROOT", geteuid() ? config.chroot : "");
+	ndc_env_put(fd, "SCRIPT_NAME", cgi_index + 1);
 }
 
 static inline void static_write(int fd, char *status,
@@ -1509,9 +1554,9 @@ static inline int request_handle_static(int fd, char *filename, struct stat *sta
 
 static inline int request_handle_websocket(int fd) {
 	struct descr *d = &descr_map[fd];
-	char buf[BUFSIZ];
+	char buf[ENV_VALUE_LEN];
 
-	if (qdb_get(d->env, buf, "HTTP_SEC_WEBSOCKET_KEY"))
+	if (ndc_env_get(fd, buf, "HTTP_SEC_WEBSOCKET_KEY"))
 		return 0;
 
 	struct io *dio = &io[fd];
@@ -1533,24 +1578,22 @@ static inline int request_handle_websocket(int fd) {
 static inline void
 request_handle_cgi(int fd, struct stat *stat_buf, char *body)
 {
-	struct descr *d = &descr_map[fd];
-
 	if (stat(cgi_index, stat_buf) || access(cgi_index, X_OK)) {
 		char *status = "404 Not Found";
 		static_write(fd, status, "text/plain",
 				-1, strlen(status));
-	} else {
-		char * args[2] = { cgi_index, NULL };
-		char **env = env_prep(d);
-		ndc_writef(fd, "HTTP/1.1 ");
-		d->flags &= ~DF_TO_CLOSE;
-
-		ndc_exec(fd, args, env, do_GET_cb, body, strlen(body));
-		env_free(env);
-
-		ndc_exec_loop(fd);
 		return;
 	}
+
+	char * args[2] = { cgi_index, NULL };
+	char **env = env_prep(fd);
+	ndc_writef(fd, "HTTP/1.1 ");
+	descr_map[fd].flags &= ~DF_TO_CLOSE;
+
+	ndc_exec(fd, args, env, do_GET_cb, body, strlen(body));
+	env_free(env);
+
+	ndc_exec_loop(fd);
 }
 
 static inline int request_handle_redirect(int fd, char *document_uri) {
@@ -1561,13 +1604,13 @@ static inline int request_handle_redirect(int fd, char *document_uri) {
 			&& (ndc_srv_flags & NDC_SSL)
 			&& !d->cSSL)
 	{
-		char host[256];
-		qdb_get(d->env, host, "HTTP_HOST");
+		char host[ENV_KEY_LEN];
+		ndc_env_get(fd, host, "HTTP_HOST");
 		char response[8285];
 
 		snprintf(response, sizeof(response),
 				"HTTP/1.1 301 Moved Permanently\r\n"
-				"Location: https://%s/%s\r\n"
+				"Location: https://%s%s\r\n"
 				"Content-Length: 0\r\n"
 				"Connection: close\r\n"
 				"\r\n", host, document_uri);
@@ -1614,7 +1657,7 @@ static void request_handle(int fd, int argc, char *argv[], int req_flags) {
 	else
 		param = "";
 
-	headers_get(d, &body_start, argv[argc]);
+	headers_get(fd, &body_start, argv[argc]);
 
 	char *filename = static_allowed(document_uri, &stat_buf);
 	if (request_handle_static(fd, filename, &stat_buf))
@@ -1630,15 +1673,15 @@ static void request_handle(int fd, int argc, char *argv[], int req_flags) {
 
 	char *body = argv[argc] + body_start + 1;
 
-	_env_prep(d, document_uri, param, method);
+	_env_prep(fd, document_uri, param, method);
 
 	if (!qdb_get(handler_hd, (void *) &handler, document_uri)) {
-		handler(fd, body, d->env);
+		handler(fd, body);
 		return;
 	}
 
 	if (config.default_handler) {
-		handler(fd, body, d->env);
+		handler(fd, body);
 		return;
 	}
 
@@ -1674,7 +1717,7 @@ void ndc_auth(int fd, char *username) {
 	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
-	d->pw = getpwnam(d->username);
+	pw_copy(&d->pw, getpwnam(d->username));
 }
 
 void ndc_pre_init(struct ndc_config *config_r) {
@@ -1688,12 +1731,14 @@ void ndc_pre_init(struct ndc_config *config_r) {
 	 * how about qdb supports that without libdb?
 	 */
 	ssl_certs = qdb_open(NULL, "u", "s", QH_AINDEX);
-	ssl_keys = qdb_open(NULL, "u", "s", 0);
-	ssl_contexts = qdb_open(NULL, "u", "p", 0);
-	ssl_domains = qdb_open(NULL, "s", "u", 0);
-	cmds_hd = qdb_open(NULL, "s", "cmd", 0);
-	mime_hd = qdb_open(NULL, "s", "s", 0);
-	handler_hd = qdb_open(NULL, "s", "p", 0);
+	ssl_keys = qdb_open(NULL, "u", "s", QH_TMP);
+	ssl_contexts = qdb_open(NULL, "u", "p", QH_TMP);
+	ssl_domains = qdb_open(NULL, "s", "u", QH_TMP);
+	cmds_hd = qdb_open(NULL, "s", "cmd", QH_TMP);
+	mime_hd = qdb_open(NULL, "s", "s", QH_TMP);
+	env_hd = qdb_open(NULL, "u", "s", QH_TMP | QH_DUP);
+	handler_hd = qdb_open(NULL, "s", "p", QH_TMP);
+
 }
 
 void _ndc_cert_add(char *domain, char *crt, char *key) {

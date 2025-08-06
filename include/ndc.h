@@ -9,6 +9,10 @@
 #include <sys/types.h>
 #include <syslog.h>
 
+#define ENV_KEY_LEN 128
+#define ENV_LEN (BUFSIZ * 2)
+#define ENV_VALUE_LEN (ENV_LEN - ENV_KEY_LEN - 2)
+
 enum descr_flags {
 	DF_CONNECTED = 1,
 	// RESERVED = 0x2,
@@ -32,7 +36,7 @@ enum ndc_req_flags {
 	NDC_POST = 1,
 };
 
-typedef void ndc_handler_t(int cfd, char *body, unsigned env);
+typedef void ndc_handler_t(int cfd, char *body);
 
 struct ndc_config {
 	char * chroot;
@@ -109,5 +113,9 @@ static inline void ndclog_err(char *str) {
 
 ssize_t ndc_mmap(char **mapped, char *file);
 char *ndc_mmap_iter(char *start, size_t *pos);
+
+void ndc_env_clear(int fd);
+int ndc_env_get(int fd, char *target, char *key);
+int ndc_env_put(int fd, char *key, char *value);
 
 #endif
