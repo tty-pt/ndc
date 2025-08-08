@@ -359,8 +359,10 @@ static void descr_new(int ssl) {
 		dio->read = dio->lower_read = ndc_ssl_low_read;
 		dio->lower_write = ndc_ssl_lower_write;
 		SSL_set_fd(d->cSSL, fd);
-		if (ssl_accept(fd))
+		if (ssl_accept(fd)) {
+			ndc_close(fd);
 			return;
+		}
 	} else {
 		dio->read = dio->lower_read = read;
 		dio->lower_write = (io_t) write;
@@ -1712,12 +1714,16 @@ void ndc_set_flags(int fd, int flags) {
 	descr_map[fd].flags = flags;
 }
 
-void ndc_auth(int fd, char *username) {
+int ndc_auth(int fd, char *username) {
 	struct descr *d = &descr_map[fd];
 	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
-	pw_copy(&d->pw, getpwnam(d->username));
+	struct passwd *pw = getpwnam(d->username);
+	if (!pw)
+		return 1;
+	pw_copy(&d->pw, pw);
+	return 0;
 }
 
 void ndc_pre_init(struct ndc_config *config_r) {

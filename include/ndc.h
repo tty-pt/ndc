@@ -91,7 +91,7 @@ void ndc_pty(int fd, char * const args[]);
 int ndc_flags(int fd);
 void ndc_close(int fd);
 void ndc_set_flags(int fd, int flags);
-void ndc_auth(int fd, char *username);
+int ndc_auth(int fd, char *username);
 unsigned ndc_env(int fd);
 void ndc_pre_init(struct ndc_config *config_r);
 void ndc_cert_add(char *str);
