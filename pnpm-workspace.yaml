@@ -1,3 +1,5 @@
 onlyBuiltDependencies:
+  - '@swc/core'
   - '@tty-pt/qmap'
   - '@tty-pt/qsys'
+  - esbuild

@@ -43,7 +43,7 @@
   },
   "homepage": "https://tty.pt",
   "devDependencies": {
-    "@tty-pt/mk": "^0.1.9",
+    "@tty-pt/mk": "^0.1.10",
     "@tty-pt/qmap": "^0.0.10",
     "@tty-pt/qsys": "^0.0.9",
     "@tty-pt/scripts": "^0.7.2",
@@ -53,7 +53,7 @@
     "lodash": "^4.17.21"
   },
   "peerDependencies": {
-    "@tty-pt/mk": "^0.1.9",
+    "@tty-pt/mk": "^0.1.10",
     "@tty-pt/qmap": "^0.0.10",
     "@tty-pt/qsys": "^0.0.9",
     "@xterm/addon-fit": "^0.10.0",

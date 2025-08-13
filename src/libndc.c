@@ -1051,8 +1051,10 @@ env_prep(int fd)
 	env = malloc(count * sizeof(char *));
 
 	c = qmap_iter(env_hd, &fd);
-	while (qmap_next(&fd, envstr, c))
+	while (qmap_next(&fd, envstr, c)) {
+		WARN("env: %s\n", envstr);
 		env[i++] = strdup(envstr);
+	}
 
 	env[i] = NULL;
 
@@ -1796,7 +1798,7 @@ ndc_pre_init(struct ndc_config *config_r)
 	cmds_hd = qmap_open("s", "cmd", 0, 0);
 	mime_hd = qmap_open("s", "s", 0, 0);
 	// env_hd = qmap_open("u", "s", 0, QMAP_DUP);
-	env_hd = qmap_open("u", "s", 0, 0);
+	env_hd = qmap_open("u", "s", 0, QMAP_DUP);
 	handler_hd = qmap_open("s", "p", 0, 0);
 }
 

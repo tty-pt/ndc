@@ -1,6 +1,7 @@
 uname != uname
 ldlibs-Linux := -lrt
-LIB-LDLIBS := -lc -lqmap -lcrypto -lssl ${ldlibs-${uname}}
+LIB-LDLIBS := -lc -lqmap -lqsys -lcrypto -lssl \
+	${ldlibs-${uname}}
 LIB := ndc
 INSTALL-BIN := ndc
 

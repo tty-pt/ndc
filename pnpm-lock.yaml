@@ -9,14 +9,14 @@ importers:
   .:
     devDependencies:
       '@tty-pt/mk':
-        specifier: ^0.1.9
-        version: 0.1.9
+        specifier: ^0.1.10
+        version: 0.1.10
       '@tty-pt/qmap':
         specifier: ^0.0.10
-        version: 0.0.10(@tty-pt/mk@0.1.9)(@tty-pt/qsys@0.0.9(@tty-pt/mk@0.1.9))
+        version: 0.0.10(@tty-pt/mk@0.1.10)(@tty-pt/qsys@0.0.9(@tty-pt/mk@0.1.10))
       '@tty-pt/qsys':
         specifier: ^0.0.9
-        version: 0.0.9(@tty-pt/mk@0.1.9)
+        version: 0.0.9(@tty-pt/mk@0.1.10)
       '@tty-pt/scripts':
         specifier: ^0.7.2
         version: 0.7.2(@testing-library/dom@10.4.1)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
@@ -751,8 +751,8 @@ packages:
     resolution: {integrity: sha512-RbzJvlNzmRq5c3O09UipeuXno4tA1FE6ikOjxZK0tuxVv3412l64l5t1W5pj4+rJq9vpkm/kwiR07aZXnsKPxw==}
     engines: {node: '>= 6'}
 
-  '@tty-pt/mk@0.1.9':
-    resolution: {integrity: sha512-lBJCF9qKPdG8uEnEx3CCqNEYgO7YvmkkQhmrQc996gUH0lNIDBd2ecpAI2eXZVQii+ZqjSxcN6jjhjxwio/F5Q==}
+  '@tty-pt/mk@0.1.10':
+    resolution: {integrity: sha512-EyPb4Fg8T7zEJoRngeDAPQHAxbOChIFuDTsLcSIbSbI3s34PUV3C5cs0G3IBpwepMZUQi1/RX5yDWAujHw3iUg==}
 
   '@tty-pt/qmap@0.0.10':
     resolution: {integrity: sha512-aWzMSi6Qh51g1xP/HMXBGZ55eTHtt0ZhLBmyj7CPJP8O1s4LdvZ/PzJSehBoFvYV7uIi0kz962/6suiI3NB3eQ==}
@@ -4377,16 +4377,16 @@ snapshots:
 
   '@tootallnate/once@1.1.2': {}
 
-  '@tty-pt/mk@0.1.9': {}
+  '@tty-pt/mk@0.1.10': {}
 
-  '@tty-pt/qmap@0.0.10(@tty-pt/mk@0.1.9)(@tty-pt/qsys@0.0.9(@tty-pt/mk@0.1.9))':
+  '@tty-pt/qmap@0.0.10(@tty-pt/mk@0.1.10)(@tty-pt/qsys@0.0.9(@tty-pt/mk@0.1.10))':
     dependencies:
-      '@tty-pt/mk': 0.1.9
-      '@tty-pt/qsys': 0.0.9(@tty-pt/mk@0.1.9)
+      '@tty-pt/mk': 0.1.10
+      '@tty-pt/qsys': 0.0.9(@tty-pt/mk@0.1.10)
 
-  '@tty-pt/qsys@0.0.9(@tty-pt/mk@0.1.9)':
+  '@tty-pt/qsys@0.0.9(@tty-pt/mk@0.1.10)':
     dependencies:
-      '@tty-pt/mk': 0.1.9
+      '@tty-pt/mk': 0.1.10
 
   '@tty-pt/scripts@0.7.2(@testing-library/dom@10.4.1)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)':
     dependencies:
