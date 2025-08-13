@@ -3,9 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <qdb.h>
-
-DB_TXN *txnid;
+#include <qmap.h>
 
 struct cmd_slot cmds[] = {
 	{
@@ -78,7 +76,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	qdb_init();
+	qmap_init();
 	ndc_pre_init(&config);
 
 	optind = 1;

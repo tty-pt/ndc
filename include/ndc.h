@@ -58,8 +58,6 @@ enum cmd_flags {
 	CF_NOTRIM = 2,
 };
 
-typedef void (*ndc_log_t)(int type, const char *fmt, ...);
-
 extern long long ndc_tick;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
@@ -98,18 +96,6 @@ void ndc_cert_add(char *str);
 void ndc_certs_add(char *fname);
 
 extern char ndc_execbuf[BUFSIZ * 64];
-extern ndc_log_t ndclog;
-
-// TODO we want formatted logs. Revise ndclog
-
-static inline void ndclog_perror(char *str) {
-        ndclog(LOG_ERR, "%s: %s\n", str, strerror(errno));
-}
-
-static inline void ndclog_err(char *str) {
-        ndclog_perror(str);
-        exit(EXIT_FAILURE);
-}
 
 ssize_t ndc_mmap(char **mapped, char *file);
 char *ndc_mmap_iter(char *start, size_t *pos);
