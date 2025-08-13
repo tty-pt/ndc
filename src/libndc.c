@@ -109,7 +109,8 @@ long long ndc_tick;
 int do_cleanup = 1;
 
 void
-ndc_env_clear(int fd) {
+ndc_env_clear(int fd)
+{
 	qmap_del(env_hd, &fd, NULL);
 }
 
@@ -156,7 +157,8 @@ ndc_close(int fd)
 	memset(d, 0, sizeof(struct descr));
 }
 
-static void cleanup(void)
+static void
+cleanup(void)
 {
 	if (!do_cleanup)
 		return;
@@ -165,12 +167,15 @@ static void cleanup(void)
 		ndc_close(di_i);
 }
 
-void sig_shutdown(int i __attribute__((unused)))
+static void
+sig_shutdown(int i UNUSED)
 {
 	ndc_srv_flags &= ~NDC_WAKE;
 }
 
-static int ssl_accept(int fd) {
+static int
+ssl_accept(int fd)
+{
 	/* fprintf(stderr, "ssl_accept %d\n", fd); */
 	struct descr *d = &descr_map[fd];
 	int res = SSL_accept(d->cSSL);
@@ -202,19 +207,15 @@ static int ssl_accept(int fd) {
 	return 1;
 }
 
-ssize_t
+static ssize_t
 ndc_ssl_low_read(int fd, void *to, size_t len)
 {
 	return SSL_read(descr_map[fd].cSSL, to, len);
 }
 
 static void
-cmd_new(
-		int *argc_r,
-		char *argv[CMD_ARGM],
-		int fd __attribute__((unused)),
-		char *input,
-		size_t len )
+cmd_new(int *argc_r, char *argv[CMD_ARGM],
+		int fd UNUSED, char *input, size_t len)
 {
 	register char *p = input;
 	int argc = 0;
@@ -257,7 +258,8 @@ ndc_ssl_lower_write(int fd, void *from, size_t len)
 }
 
 static int
-ndc_write_remaining(int fd) {
+ndc_write_remaining(int fd)
+{
 	struct descr *d = &descr_map[fd];
 	struct io *dio = &io[fd];
 
@@ -276,7 +278,8 @@ ndc_write_remaining(int fd) {
 }
 
 inline static void
-ndc_rem_may_inc(int fd, size_t len) {
+ndc_rem_may_inc(int fd, size_t len)
+{
 	struct descr *d = &descr_map[fd];
 	d->remaining_len += len;
 
@@ -287,7 +290,7 @@ ndc_rem_may_inc(int fd, size_t len) {
 	}
 }
 
-ssize_t
+static ssize_t
 ndc_low_write(int fd, void *from, size_t len)
 {
 	struct descr *d = &descr_map[fd];
@@ -313,14 +316,17 @@ ndc_low_write(int fd, void *from, size_t len)
 }
 
 int
-ndc_env_put(int fd, char *key, char *value) {
+ndc_env_put(int fd, char *key, char *value)
+{
 	size_t len = strlen(key) + strlen(value) + 2;
 	char env_item[ENV_LEN];
 	snprintf(env_item, len, "%s=%s", key, value);
 	return qmap_put(env_hd, &fd, env_item);
 }
 
-static void descr_new(int ssl) {
+static void
+descr_new(int ssl)
+{
 	struct sockaddr_in addr;
 	socklen_t addr_len = (socklen_t)sizeof(addr);
 	int fd = accept(ssl ? srv_ssl_fd : srv_fd, (struct sockaddr *) &addr, &addr_len);
@@ -428,7 +434,7 @@ ndc_wall(const char *msg)
 	DESCR_ITER NDC_TWRITE(di_i, (char *) msg);
 }
 
-static void
+static inline void
 cmd_proc(int fd, int argc, char *argv[])
 {
 	if (argc < 1)
@@ -485,8 +491,9 @@ ndc_tty_update(int fd)
 	tcflush(d->pty, TCIFLUSH);
 }
 
-static int
-cmd_parse(int fd, char *cmd, size_t len) {
+static inline int
+cmd_parse(int fd, char *cmd, size_t len)
+{
 	int argc;
 	char *argv[CMD_ARGM];
 
@@ -509,7 +516,9 @@ cmd_parse(int fd, char *cmd, size_t len) {
 	return len;
 }
 
-static void pty_open(int fd) {
+static inline void
+pty_open(int fd)
+{
 	struct descr *d = &descr_map[fd];
 
 	CBUG(fcntl(fd, F_SETFL, O_NONBLOCK) == -1,
@@ -649,7 +658,9 @@ pty_read(int fd)
 
 int ndc_exec_loop(int cfd);
 
-static inline void descr_proc_writes(void) {
+static inline void
+descr_proc_writes(void)
+{
 	for (register int i = 0; i < FD_SETSIZE; i++) {
 		struct descr *d = &descr_map[i];
 
@@ -671,7 +682,9 @@ static inline void descr_proc_writes(void) {
 	}
 }
 
-static inline void descr_proc_reads(void) {
+static inline void
+descr_proc_reads(void)
+{
 	for (register int i = 0; i < FD_SETSIZE; i++) {
 		struct descr *d = &descr_map[i];
 
@@ -696,14 +709,17 @@ static inline void descr_proc_reads(void) {
 	}
 }
 
-static long long timestamp(void) {
+static long long
+timestamp(void)
+{
 	struct timeval te;
 	gettimeofday(&te, NULL); // get current time
 	return te.tv_sec * 1000000LL + te.tv_usec;
 }
 
 static void
-ndc_bind(int *srv_fd_r, int ssl) {
+ndc_bind(int *srv_fd_r, int ssl)
+{
 	int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
 	int opt;
 
@@ -745,10 +761,9 @@ ndc_bind(int *srv_fd_r, int ssl) {
 	*srv_fd_r = srv_fd;
 }
 
-static int ndc_sni(
-		SSL *ssl,
-		int *ad __attribute__((unused)),
-		void *arg __attribute__((unused)) ) {
+static int
+ndc_sni(SSL *ssl, int *ad UNUSED, void *arg UNUSED)
+{
 	const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 	if (!servername)
 		return SSL_TLSEXT_ERR_NOACK; // no SNI
@@ -765,44 +780,68 @@ static int ndc_sni(
 	return SSL_TLSEXT_ERR_OK;
 }
 
-SSL_CTX *ndc_ctx_new(char *crt, char *key) {
-	SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_server_method());
-	SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+SSL_CTX *
+ndc_ctx_new(char *crt, char *key)
+{
+	SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+	CBUG(!ctx, "SSL_CTX_new\n");
 
-	const char *cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
-		"ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384";
+	CBUG(!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION),
+			"set_min_proto_version\n");
 
-	SSL_CTX_set_cipher_list(ssl_ctx, cipher_list);
-	SSL_CTX_set_ecdh_auto(ssl_ctx, 1);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
 
-	CBUG(SSL_CTX_use_certificate_chain_file(ssl_ctx, crt) == -1,
-			"SSL_CTX_use_certificate_chain_file\n");
+	CBUG(!SSL_CTX_set_cipher_list(ctx, "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!MD5:!RC4"),
+			"set_cipher_list\n");
 
-	CBUG(SSL_CTX_use_PrivateKey_file(ssl_ctx, key, SSL_FILETYPE_PEM) == -1,
-			"SSL_CTX_use_certificate_chain_file\n");
 
+	(void)SSL_CTX_set_ciphersuites(ctx,
+			"TLS_AES_256_GCM_SHA384:"
+			"TLS_AES_128_GCM_SHA256:"
+			"TLS_CHACHA20_POLY1305_SHA256");
+
+	CBUG(!SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384"),
+			"set1_groups_list\n");
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	SSL_CTX_set_ecdh_auto(ctx, 1);
+#else
 	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
 	CBUG(!fp, "open dhparam.pem\n");
-
 	DH *dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
 	CBUG(!dh, "PEM_read_DHparams\n");
-	SSL_CTX_set_tmp_dh(ssl_ctx, dh);
+	SSL_CTX_set_tmp_dh(ctx, dh);
+#endif
 
-	return ssl_ctx;
+
+	CBUG(SSL_CTX_use_certificate_chain_file(ctx, crt) <= 0,
+			"use_certificate_chain_file\n");
+	CBUG(SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) <= 0,
+			"use_privatekey_file\n");
+	CBUG(!SSL_CTX_check_private_key(ctx),
+			"private key does not match certificate\n");
+
+	return ctx;
 }
 
-static int openssl_error_callback(const char *str, size_t len, void *u) {
+static int
+openssl_error_callback(const char *str, size_t len, void *u)
+{
     (void)u;
     ERR("%.*s\n", (int) len, str);
     return 0;
 }
 
-void ndc_register(char *name, ndc_cb_t *cb, int flags) {
+void
+ndc_register(char *name, ndc_cb_t *cb, int flags)
+{
 	struct cmd_slot cmd = { .name = name, .cb = cb, .flags = flags };
 	qmap_put(cmds_hd, name, &cmd);
 }
 
-ssize_t ndc_mmap(char **mapped, char *file) {
+ssize_t
+ndc_mmap(char **mapped, char *file)
+{
 	int fd = open(file, O_RDONLY);
 
 	if (fd < 0)
@@ -829,7 +868,9 @@ ssize_t ndc_mmap(char **mapped, char *file) {
 	return file_size;
 }
 
-char *ndc_mmap_iter(char *start, size_t *pos_r) {
+char *
+ndc_mmap_iter(char *start, size_t *pos_r)
+{
 	static char line[BUFSIZ];
 	start += *pos_r;
 	memset(line, 0, BUFSIZ);
@@ -842,7 +883,9 @@ char *ndc_mmap_iter(char *start, size_t *pos_r) {
 	return line;
 }
 
-void pw_copy(struct passwd *target, struct passwd *origin) {
+void
+pw_copy(struct passwd *target, struct passwd *origin)
+{
 	*target = *origin;
 	target->pw_name = strdup(origin->pw_name);
 	target->pw_shell = strdup(origin->pw_shell);
@@ -850,13 +893,17 @@ void pw_copy(struct passwd *target, struct passwd *origin) {
 	target->pw_passwd = NULL;
 }
 
-void pw_free(struct passwd *target) {
+void
+pw_free(struct passwd *target)
+{
 	free(target->pw_name);
 	free(target->pw_shell);
 	free(target->pw_dir);
 }
 
-void ndc_init(void) {
+void
+ndc_init(void)
+{
 	ndc_srv_flags |= config.flags | NDC_WAKE;
 
 	char euname[BUFSIZ];
@@ -916,7 +963,9 @@ void ndc_init(void) {
 		exit(EXIT_SUCCESS);
 }
 
-int ndc_main(void) {
+int
+ndc_main(void)
+{
 	struct timeval timeout;
 
 	ndc_tick = timestamp();
@@ -964,7 +1013,9 @@ int ndc_main(void) {
 	return 0;
 }
 
-static struct passwd *drop_priviledges(int fd) {
+static struct passwd *
+drop_priviledges(int fd)
+{
 	struct descr *d = &descr_map[fd];
 
 	struct passwd *pw = (d->flags & DF_AUTHENTICATED)
@@ -984,7 +1035,8 @@ static struct passwd *drop_priviledges(int fd) {
 	return pw;
 }
 
-static inline char **env_prep(int fd)
+static inline char **
+env_prep(int fd)
 {
 	char **env;
 	char envstr[ENV_LEN];
@@ -1007,7 +1059,9 @@ static inline char **env_prep(int fd)
 	return env;
 }
 
-static inline void env_free(char **env) {
+static inline void
+env_free(char **env)
+{
 	for (int i = 0; env[i]; i++)
 		free(env[i]);
 	free(env);
@@ -1083,7 +1137,9 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 }
 
 
-void ndc_pty(int fd, char * const args[]) {
+void
+ndc_pty(int fd, char * const args[])
+{
 	struct descr *d = &descr_map[fd];
 
 	/* fprintf(stderr, "ndc_pty %s %d pty %d SGA %d ECHO %d\n", */
@@ -1096,16 +1152,15 @@ void ndc_pty(int fd, char * const args[]) {
 }
 
 void
-do_sh(
-		int fd,
-		int argc __attribute__((unused)),
-		char *argv[] __attribute__((unused)) )
+do_sh(int fd, int argc UNUSED, char *argv[] UNUSED)
 {
 	char *args[] = { NULL, NULL };
 	ndc_pty(fd, args);
 }
 
-static char *env_name(char *key) {
+static char *
+env_name(char *key)
+{
 	static char buf[BUFSIZ];
 	int i = 0;
 	register char *b, *s;
@@ -1186,11 +1241,8 @@ popen2(int cfd, char * const args[], char * const env[])
 }
 
 static inline
-ssize_t cb_proc(
-		int fd,
-		int pfd,
-		cmd_cb_t callback
-		)
+ssize_t cb_proc(int fd, int pfd,
+		cmd_cb_t callback)
 {
 	char ndc_execbuf[BUFSIZ * 64];
 
@@ -1217,7 +1269,8 @@ ssize_t cb_proc(
 }
 
 int
-ndc_exec_loop(int cfd) {
+ndc_exec_loop(int cfd)
+{
 	struct descr *d = &descr_map[cfd];
 	fd_set read_fds;
 	int ready_fds, total_timeout = 15, ret = 0;
@@ -1318,7 +1371,10 @@ ndc_exec_loop(int cfd) {
 }
 
 void
-ndc_exec(int cfd, char * const args[], char * const env[], cmd_cb_t callback, void *input, size_t input_len) {
+ndc_exec(int cfd, char * const args[], char * const env[],
+		cmd_cb_t callback, void *input,
+		size_t input_len)
+{
 	struct descr *d = &descr_map[cfd];
 	int flags;
 
@@ -1340,19 +1396,18 @@ ndc_exec(int cfd, char * const args[], char * const env[], cmd_cb_t callback, vo
 	FD_SET(cfd, &fds_wactive);
 }
 
-void do_GET_cb(
-		int fd,
-		char *buf,
-		size_t len,
-		int ofd) {
-
+void
+do_GET_cb(int fd, char *buf, size_t len, int ofd)
+{
 	if (ofd == 1)
 		ndc_write(fd, buf, len);
 	else
 		ERR("%s\n", buf);
 }
 
-static void url_decode(char *str) {
+static void
+url_decode(char *str)
+{
     char *src = str, *dst = str;
 
     while (*src) {
@@ -1372,7 +1427,9 @@ static void url_decode(char *str) {
     *dst = '\0';
 }
 
-static char *env_sane(char *str) {
+static char *
+env_sane(char *str)
+{
 	static char buf[BUFSIZ];
 	char *b;
 	for (b = buf; b - buf - 1 < BUFSIZ && (isalnum(*str) || *str == '/' || *str == '+'
@@ -1383,7 +1440,9 @@ static char *env_sane(char *str) {
 	return buf;
 }
 
-static void ndc_auth_try(int fd) {
+static void
+ndc_auth_try(int fd)
+{
 	if (!ndc_auth_check)
 		return;
 	char *user = ndc_auth_check(fd);
@@ -1392,7 +1451,9 @@ static void ndc_auth_try(int fd) {
 }
 
 
-inline static char *static_allowed(const char *path, struct stat *stat_buf) {
+inline static char *
+static_allowed(const char *path, struct stat *stat_buf)
+{
 	static char output[BUFSIZ];
 	char *rstart = statics_mmap, *start, *out = NULL;
 	size_t pos = 0;
@@ -1425,7 +1486,9 @@ inline static char *static_allowed(const char *path, struct stat *stat_buf) {
 	return out;
 }
 
-int ndc_env_get(int fd, char *target, char *key) {
+int
+ndc_env_get(int fd, char *target, char *key)
+{
 	unsigned c = qmap_iter(env_hd, &fd);
 	char envstr[BUFSIZ];
 
@@ -1445,9 +1508,9 @@ int ndc_env_get(int fd, char *target, char *key) {
 	return 1;
 }
 
-static void _env_prep(int fd,
-		char *document_uri, char *param,
-		char *method)
+static void
+_env_prep(int fd, char *document_uri,
+		char *param, char *method)
 {
 	char req_content_type[BUFSIZ];
 	if (ndc_env_get(fd, req_content_type, "HTTP_CONTENT_TYPE"))
@@ -1462,8 +1525,9 @@ static void _env_prep(int fd,
 	ndc_env_put(fd, "SCRIPT_NAME", cgi_index + 1);
 }
 
-static inline void static_write(int fd, char *status,
-		char *content_type, int want_fd, off_t total)
+static inline void
+static_write(int fd, char *status, char *content_type,
+		int want_fd, off_t total)
 {
 	struct descr *d = &descr_map[fd];
 	time_t now = time(NULL);
@@ -1501,7 +1565,9 @@ end:	if (!d->remaining_len)
 		ndc_close(fd);
 }
 
-static inline int request_handle_static(int fd, char *filename, struct stat *stat_buf) {
+static inline int
+request_handle_static(int fd, char *filename, struct stat *stat_buf)
+{
 	char buf[BUFSIZ];
 	errno = 0;
 	char *ext = filename, *s;
@@ -1528,7 +1594,9 @@ static inline int request_handle_static(int fd, char *filename, struct stat *sta
 	return 1;
 }
 
-static inline int request_handle_websocket(int fd) {
+static inline int
+request_handle_websocket(int fd)
+{
 	struct descr *d = &descr_map[fd];
 	char buf[ENV_VALUE_LEN];
 
@@ -1572,7 +1640,9 @@ request_handle_cgi(int fd, struct stat *stat_buf, char *body)
 	ndc_exec_loop(fd);
 }
 
-static inline int request_handle_redirect(int fd, char *document_uri) {
+static inline int
+request_handle_redirect(int fd, char *document_uri)
+{
 	struct descr *d = &descr_map[fd];
 	d->flags = DF_TO_CLOSE;
 
@@ -1601,7 +1671,9 @@ static inline int request_handle_redirect(int fd, char *document_uri) {
 	return 0;
 }
 
-static void request_handle(int fd, int argc, char *argv[], int req_flags) {
+static
+void request_handle(int fd, int argc, char *argv[], int req_flags)
+{
 	char *method;
 	struct descr *d = &descr_map[fd];
 	size_t body_start;
@@ -1664,7 +1736,9 @@ static void request_handle(int fd, int argc, char *argv[], int req_flags) {
 	request_handle_cgi(fd, &stat_buf, body);
 }
 
-void ndc_register_handler(char *path, ndc_handler_t *handler) {
+void
+ndc_register_handler(char *path, ndc_handler_t *handler)
+{
 	qmap_put(handler_hd, path, &handler);
 }
 
@@ -1680,15 +1754,21 @@ do_POST(int fd, int argc, char *argv[])
 	request_handle(fd, argc, argv, NDC_POST);
 }
 
-int ndc_flags(int fd) {
+int
+ndc_flags(int fd)
+{
 	return descr_map[fd].flags;
 }
 
-void ndc_set_flags(int fd, int flags) {
+void
+ndc_set_flags(int fd, int flags)
+{
 	descr_map[fd].flags = flags;
 }
 
-int ndc_auth(int fd, char *username) {
+int
+ndc_auth(int fd, char *username)
+{
 	struct descr *d = &descr_map[fd];
 	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
@@ -1700,7 +1780,9 @@ int ndc_auth(int fd, char *username) {
 	return 0;
 }
 
-void ndc_pre_init(struct ndc_config *config_r) {
+void
+ndc_pre_init(struct ndc_config *config_r)
+{
 	memcpy(&config, config_r, sizeof(config));
 	if ((ndc_srv_flags & NDC_DETACH))
 		qsyslog = syslog;
@@ -1718,7 +1800,9 @@ void ndc_pre_init(struct ndc_config *config_r) {
 	handler_hd = qmap_open("s", "p", 0, 0);
 }
 
-void _ndc_cert_add(char *domain, char *crt, char *key) {
+void
+_ndc_cert_add(char *domain, char *crt, char *key)
+{
 	SSL_CTX *ssl_ctx = ndc_ctx_new(crt, key);
 
 	unsigned id = qmap_put(ssl_certs, NULL, crt);
@@ -1727,7 +1811,9 @@ void _ndc_cert_add(char *domain, char *crt, char *key) {
 	qmap_put(ssl_domains, domain, &id);
 }
 
-void ndc_cert_add(char *optarg) {
+void
+ndc_cert_add(char *optarg)
+{
 	char domain[BUFSIZ], crt[BUFSIZ], *ioc;
 	ioc = strchr(optarg, ':');
 	CBUG(!ioc, "Invalid cert info\n");
@@ -1743,7 +1829,9 @@ void ndc_cert_add(char *optarg) {
 }
 
 
-void ndc_certs_add(char *certs_file) {
+void
+ndc_certs_add(char *certs_file)
+{
 	char *mapped;
 	size_t file_size = ndc_mmap(&mapped, certs_file);
 	size_t pos = 0;

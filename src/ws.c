@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <qsys.h>
 
 #define OPCODE(head) ((unsigned char) (head[0] & 0x0f))
 #define PAYLOAD_LEN(head) ((unsigned char) (head[1] & 0x7f))
@@ -148,7 +149,7 @@ ws_close(int cfd) {
 }
 
 ssize_t
-ws_read(int cfd, void *data, size_t len __attribute__((unused)))
+ws_read(int cfd, void *data, size_t len UNUSED)
 {
 	struct ws_frame *frame = &frame_map[cfd];
 	uint64_t pl = 0, n, i;
