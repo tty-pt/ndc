@@ -1,8 +1,6 @@
 #include "../include/ws.h"
 #include "../include/iio.h"
-#include "../include/ndc.h"
 #include <arpa/inet.h>
-#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <openssl/sha.h>
@@ -167,7 +165,7 @@ ws_read(int cfd, void *data, size_t len __attribute__((unused)))
 		return 0;
 	if (n != sizeof(frame->head)) {
 		if (errno != EAGAIN)
-			fprintf(stderr, "ws_read %d: bad frame head size: %llu %d\n", cfd, n, errno);
+			fprintf(stderr, "ws_read %d: bad frame head size %d\n", cfd, errno);
 		goto error;
 	}
 
