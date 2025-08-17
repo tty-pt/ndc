@@ -54,8 +54,8 @@
 }
 
 #define FIRST_INPUT_SIZE (BUFSIZ * 2)
-#define SELECT_TIMEOUT 10000
-#define EXEC_TIMEOUT 100000
+#define SELECT_TIMEOUT 1000000
+#define EXEC_TIMEOUT 1000000
 
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
@@ -64,6 +64,8 @@ static char *statics_mmap;
 static size_t statics_len = 0;
 static char *cgi_index = "./index.sh";
 struct passwd ndc_pw;
+
+struct timeval select_timeout, exec_timeout;
 
 struct io io[FD_SETSIZE];
 
@@ -344,7 +346,7 @@ descr_new(int ssl)
 	memset(dio, 0, sizeof(struct io));
 	d->addr = addr;
 	d->fd = fd;
-	d->flags = DF_ACCEPTED;
+	d->flags = 0;
 	d->remaining_size = BUFSIZ * 64;
 	d->remaining = malloc(d->remaining_size);
 	d->epid = 0;
@@ -366,6 +368,7 @@ descr_new(int ssl)
 			return;
 		}
 	} else {
+		d->flags = DF_ACCEPTED;
 		dio->read = dio->lower_read = read;
 		dio->lower_write = (io_t) write;
 	}
@@ -958,6 +961,11 @@ ndc_init(void)
 		ndc_bind(&srv_ssl_fd, 1);
 
 	ndc_bind(&srv_fd, 0);
+
+	exec_timeout.tv_sec = EXEC_TIMEOUT / 1000000;
+	exec_timeout.tv_usec = EXEC_TIMEOUT % 1000000;
+	select_timeout.tv_sec = SELECT_TIMEOUT / 1000000;
+	select_timeout.tv_usec = SELECT_TIMEOUT % 1000000;
 	
 	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
 		exit(EXIT_SUCCESS);
@@ -985,8 +993,7 @@ ndc_main(void)
 			if (descr_map[i].remaining_len)
 				ndc_write_remaining(i);
 
-		timeout.tv_sec = 0;
-		timeout.tv_usec = SELECT_TIMEOUT;
+		memcpy(&timeout, &select_timeout, sizeof(timeout));
 
 		fds_read = fds_active;
 		fds_write = fds_wactive;
@@ -1040,7 +1047,7 @@ env_prep(int fd)
 {
 	char **env;
 	char envstr[ENV_LEN];
-	size_t count = 0;
+	size_t count = 1;
 	unsigned c;
 	int i = 0;
 
@@ -1275,11 +1282,12 @@ ndc_exec_loop(int cfd)
 {
 	struct descr *d = &descr_map[cfd];
 	fd_set read_fds;
-	int ready_fds, total_timeout = 15, ret = 0;
+	int ready_fds, total_timeout = 40 /* should be a config option */, ret = 0;
 	ssize_t len = 0;
 
 	do {
-		struct timeval timeout = { 0, EXEC_TIMEOUT };
+		struct timeval timeout;
+		memcpy(&timeout, &exec_timeout, sizeof(timeout));
 		int pfd;
 		time_t dt;
 
@@ -1310,7 +1318,7 @@ ndc_exec_loop(int cfd)
 			return 1;
 
 		if (ready_fds == -1) {
-			ERR("select\n");
+			ERR("select %d\n", errno);
 			break;
 		}
 
@@ -1797,7 +1805,6 @@ ndc_pre_init(struct ndc_config *config_r)
 	ssl_domains = qmap_open("s", "u", 0, 0);
 	cmds_hd = qmap_open("s", "cmd", 0, 0);
 	mime_hd = qmap_open("s", "s", 0, 0);
-	// env_hd = qmap_open("u", "s", 0, QMAP_DUP);
 	env_hd = qmap_open("u", "s", 0, QMAP_DUP);
 	handler_hd = qmap_open("s", "p", 0, 0);
 }
