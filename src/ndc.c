@@ -65,6 +65,8 @@ main(int argc, char *argv[])
 	register char c;
 	int euid = 0;
 
+	memset(&config, 0, sizeof(config));
+
 	openlog("nd", LOG_PID | LOG_CONS | LOG_NDELAY,
 			LOG_DAEMON);
 

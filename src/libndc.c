@@ -60,8 +60,8 @@
 }
 
 #define FIRST_INPUT_SIZE (BUFSIZ * 2)
-#define SELECT_TIMEOUT 100000
-#define EXEC_TIMEOUT 100000
+#define SELECT_TIMEOUT 10000
+#define EXEC_TIMEOUT 1000
 
 struct descr {
 	SSL *cSSL;
@@ -377,7 +377,7 @@ descr_new(int ssl)
 	d->addr = addr;
 	d->fd = fd;
 	d->flags = 0;
-	d->remaining_size = BUFSIZ * 64;
+	d->remaining_size = BUFSIZ * 1024;
 	d->remaining = malloc(d->remaining_size);
 	d->epid = 0;
 	d->env_hd = qmap_open(QM_STR, 0, ENV_MASK, 0);
@@ -394,10 +394,8 @@ descr_new(int ssl)
 		dio->read = dio->lower_read = ndc_ssl_low_read;
 		dio->lower_write = ndc_ssl_lower_write;
 		SSL_set_fd(d->cSSL, fd);
-		if (ssl_accept(fd)) {
-			ndc_close(fd);
+		if (ssl_accept(fd))
 			return;
-		}
 	} else {
 		d->flags = DF_ACCEPTED;
 		dio->read = dio->lower_read = read;
@@ -1303,6 +1301,8 @@ ndc_exec_loop(int cfd)
 	int ready_fds, total_timeout = 40 /* should be a config option */, ret = 0;
 	ssize_t len = 0;
 
+	d->flags &= ~DF_TO_CLOSE;
+
 	do {
 		struct timeval timeout;
 		memcpy(&timeout, &exec_timeout, sizeof(timeout));
@@ -1383,8 +1383,6 @@ ndc_exec_loop(int cfd)
 		len = cb_proc(cfd, d->pipes[2], d->callback);
 	}
 
-	if (!(d->flags & DF_WEBSOCKET))
-		d->flags |= DF_TO_CLOSE;
 	close(d->pipes[1]);
 	close(d->pipes[2]);
 	kill(-d->epid, SIGKILL);
@@ -1393,7 +1391,8 @@ ndc_exec_loop(int cfd)
 	memset(d->pipes, 0, sizeof(d->pipes));
 	FD_CLR(cfd, &fds_wactive);
 
-	if ((d->flags & DF_TO_CLOSE) && !d->remaining_len)
+	d->flags |= DF_TO_CLOSE;
+	if (!d->remaining_len)
 		ndc_close(cfd);
 
 	return ret;
@@ -1556,9 +1555,6 @@ static_write(int fd, char *status, char *content_type,
 	struct tm *tm_info = gmtime(&now);
 	char date[100];
 
-	if (!(d->flags & DF_WEBSOCKET))
-		d->flags |= DF_TO_CLOSE;
-
 	strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 	ndc_writef(fd, "HTTP/1.1 %s\r\n"
 			"Date: %s\r\n"
@@ -1669,7 +1665,6 @@ request_handle_cgi(int fd, struct stat *stat_buf, char *body)
 
 	char * args[2] = { cgi_index, NULL };
 	ndc_writef(fd, "HTTP/1.1 ");
-	descr_map[fd].flags &= ~DF_TO_CLOSE;
 
 	ndc_exec(fd, args, do_GET_cb, body, strlen(body));
 
@@ -1688,7 +1683,7 @@ request_handle_redirect(int fd, char *document_uri)
 		char host[ENV_KEY_LEN];
 		ndc_env_get(fd, host, "HTTP_HOST");
 		char response[8285];
-		d->flags = DF_TO_CLOSE;
+		d->flags |= DF_TO_CLOSE;
 
 		snprintf(response, sizeof(response),
 				"HTTP/1.1 301 Moved Permanently\r\n"
@@ -1744,8 +1739,11 @@ void request_handle(int fd, int argc, char *argv[], int req_flags)
 
 	ndc_auth_try(fd);
 
-	if (request_handle_websocket(fd))
-		return;
+	if (!(d->flags & DF_WEBSOCKET)) {
+		if (request_handle_websocket(fd))
+			return;
+		d->flags |= DF_TO_CLOSE;
+	}
 
 	if (request_handle_static(fd, document_uri, &stat_buf))
 		return;
@@ -1826,7 +1824,7 @@ ndc_pre_init(struct ndc_config *config_r)
 		qsyslog = syslog;
 
 	mime_hd = qmap_open(QM_STR, 0, MIME_MASK, 0);
-	cert_hd = qmap_open(QM_HASH, 0, CERT_MASK, 0);
+	cert_hd = qmap_open(QM_STR, 0, CERT_MASK, 0);
 	hdlr_hd = qmap_open(QM_STR, 0, HDLR_MASK, 0);
 	cmds_hd = qmap_open(QM_STR, 0, CMD_MASK, 0);
 
