@@ -9,14 +9,17 @@ importers:
   .:
     devDependencies:
       '@tty-pt/mk':
-        specifier: ^0.1.12
-        version: 0.1.13
+        specifier: ^0.1.16
+        version: 0.1.16
+      '@tty-pt/ndx':
+        specifier: ^0.0.1
+        version: 0.0.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))
       '@tty-pt/qmap':
-        specifier: ^0.1.3
-        version: 0.1.3(@tty-pt/mk@0.1.13)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.13))
+        specifier: ^0.1.5
+        version: 0.1.5(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))
       '@tty-pt/qsys':
         specifier: ^0.0.10
-        version: 0.0.10(@tty-pt/mk@0.1.13)
+        version: 0.0.10(@tty-pt/mk@0.1.16)
       '@tty-pt/scripts':
         specifier: ^0.7.2
         version: 0.7.2(@testing-library/dom@10.4.1)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
@@ -751,13 +754,19 @@ packages:
     resolution: {integrity: sha512-RbzJvlNzmRq5c3O09UipeuXno4tA1FE6ikOjxZK0tuxVv3412l64l5t1W5pj4+rJq9vpkm/kwiR07aZXnsKPxw==}
     engines: {node: '>= 6'}
 
-  '@tty-pt/mk@0.1.13':
-    resolution: {integrity: sha512-JBs0+fI7z3G+t66epXBEvFgkjjnN2ag2UW/ODIWxogIk5Om7Y/na6CDxCjUSL2/n3fiVV8jbT3dKGxJrVU37eQ==}
+  '@tty-pt/mk@0.1.16':
+    resolution: {integrity: sha512-FfZQiSHEZbnNezAVBY/UOByj7bzXwQvAU/ReO8qIEmP3qJABaV2ugGqR/JbMN7inl+7RB0D/IhYjXgnMhys3Ug==}
 
-  '@tty-pt/qmap@0.1.3':
-    resolution: {integrity: sha512-MSUQtaylhS815CvgForf0BoQZ7jgDSycOCc8yjOIa5clB4SM3OBReHouU/isnkCrT8cUvyyUdC039Qv6i6ul8Q==}
+  '@tty-pt/ndx@0.0.1':
+    resolution: {integrity: sha512-ruYw3c87TCwarsL4dahsjNGo/DzEn+xFYqZaR/h/7xF8KmQM/9LK94ioqkWiqq43G1jBWHOG2WYI5O87wjbM1w==}
     peerDependencies:
-      '@tty-pt/mk': ^0.1.14
+      '@tty-pt/mk': ^0.1.16
+      '@tty-pt/qsys': ^0.0.10
+
+  '@tty-pt/qmap@0.1.5':
+    resolution: {integrity: sha512-w7TBR/BjfSqUoqWgNk6Q6cL2PXISOtsPecR0XtaGj3PW8zriE/rqRi93e8LROFbbbznhSjFpZKn41nhu3NVsMg==}
+    peerDependencies:
+      '@tty-pt/mk': ^0.1.16
       '@tty-pt/qsys': ^0.0.10
 
   '@tty-pt/qsys@0.0.10':
@@ -4377,16 +4386,21 @@ snapshots:
 
   '@tootallnate/once@1.1.2': {}
 
-  '@tty-pt/mk@0.1.13': {}
+  '@tty-pt/mk@0.1.16': {}
 
-  '@tty-pt/qmap@0.1.3(@tty-pt/mk@0.1.13)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.13))':
+  '@tty-pt/ndx@0.0.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))':
     dependencies:
-      '@tty-pt/mk': 0.1.13
-      '@tty-pt/qsys': 0.0.10(@tty-pt/mk@0.1.13)
+      '@tty-pt/mk': 0.1.16
+      '@tty-pt/qsys': 0.0.10(@tty-pt/mk@0.1.16)
 
-  '@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.13)':
+  '@tty-pt/qmap@0.1.5(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))':
     dependencies:
-      '@tty-pt/mk': 0.1.13
+      '@tty-pt/mk': 0.1.16
+      '@tty-pt/qsys': 0.0.10(@tty-pt/mk@0.1.16)
+
+  '@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16)':
+    dependencies:
+      '@tty-pt/mk': 0.1.16
 
   '@tty-pt/scripts@0.7.2(@testing-library/dom@10.4.1)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)':
     dependencies:

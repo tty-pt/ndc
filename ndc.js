@@ -1,6 +1,7 @@
 // import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import "./ndc.css";
 
 let term_max = 0;
 
@@ -13,6 +14,14 @@ function create(element, options = {}) {
     url = proto + "://" + window.location.hostname + ":" + port,
   } = options;
 
+  let sub = options.sub ?? {
+    onMessage: function (_ev, _arr) { return true; },
+    onOpen: function (_term, _ws) {},
+    onClose: function (_ws) {},
+    cols: 80,
+    rows: 25,
+  };
+
   const fitAddon = new FitAddon();
   const resizeObserver = new ResizeObserver(() => fitAddon.fit());
   const term = new globalThis.Terminal({
@@ -22,45 +31,19 @@ function create(element, options = {}) {
     allowProposedApi: true,
   });
 
-  let ws = new WebSocket(url, 'binary');
-  ws.binaryType = 'arraybuffer';
+  let ws = {};
 
-  let sub = options.sub;
-
-  let subContents = {
-        ...options, ws, term,
-        write: data => term.write(data),
-  };
+  const write = data => term.write(data);
 
   const terminst = term_max;
   term_max++;
 
   function send(text) {
-    console.log("SEND!", terminst, text);
-    sub.ws.send(text);
-  }
-
-  if (sub) {
-    Object.assign(sub, {
-      ...subContents,
-      onMessage: sub.onMessage,
-      onOpen: sub.onOpen,
-      onClose: sub.onClose,
-      send,
-    });
-  } else {
-    sub = {
-      ...subContents,
-      onMessage: function (_ev, _arr) { return true; },
-      onOpen: function (_term, _ws) {},
-      onClose: function (_ws) {},
-      send,
-    };
+    ws.send(text);
   }
 
   const decoder = new TextDecoder('utf-8');
-  let resolveConnect = null;
-  const connected = new Promise(resolve => resolveConnect = resolve);
+  let connected = false;
 
   let will_echo = true;
   let raw = false;
@@ -107,37 +90,13 @@ function create(element, options = {}) {
     }
   }
 
-  function onOpen(term, ws) {
-    resolveConnect();
-    fitAddon.fit();
-    sub.onOpen(term, ws);
-  }
-
-  function onClose() {
-    sub.onClose(sub);
-
-    ws = ws.onclose = ws.onmessage = ws.onopen = null;
-    term.dispose();
-
-    // reconnect
-    const id = setInterval(() => {
-	    create(element, { ...options, sub });
-    }, 3000);
-
-    const prevOnOpen = sub.onOpen;
-
-    sub.onOpen = (term, ws) => {
-      clearInterval(id);
-      prevOnOpen(term, ws);
-      sub.onOpen = prevOnOpen;
-    };
-  }
-
-  ws.onopen = onOpen;
-  ws.onmessage = onMessage;
-  ws.onclose = onClose;
-
   function resize(cols, rows) {
+    sub.cols = cols;
+    sub.rows = rows;
+
+    if (!connected)
+      return;
+
     const IAC = 255;
     const SB = 250;
     const NAWS = 31;
@@ -155,7 +114,7 @@ function create(element, options = {}) {
       IAC, SE
     ]);
   
-    connected.then(() => ws.send(nawsCommand));
+    ws.send(nawsCommand);
   }
 
   function open(parent) {
@@ -208,7 +167,33 @@ function create(element, options = {}) {
 
   open(element);
 
+  function connect() {
+    ws = new WebSocket(url, 'binary');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      connected = true;
+      resize(sub.cols, sub.rows);
+      sub.onOpen(term, ws);
+    };
+
+    ws.onmessage = onMessage;
+
+    ws.onclose = () => {
+      connected = false;
+      sub.onClose();
+      sub.timeout = setTimeout(() => {
+        clearTimeout(sub.timeout);
+        connect();
+      }, 3000);
+    };
+  };
+
+  connect();
+
+
   return sub;
 }
 
+window.ttyNdc = { create };
 export default { create };

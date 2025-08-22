@@ -11,9 +11,7 @@
 	</head>
 	<body class="margin-0 background-body">
 		<div class="size-vertical-view"><pre id="term" class="margin-0 size-vertical overflow" /></div>
-		<script async defer>window.onload = function () {
-			window.ttyNdc.connect();
-			window.ttyNdc.open(document.getElementById("term"));
-		};</script>
+		<script defer src="./ndc.js"></script>
+		<script defer src="./ndc-tty.js"></script>
 	</body>
 </html>

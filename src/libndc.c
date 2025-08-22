@@ -63,11 +63,6 @@
 #define SELECT_TIMEOUT 100000
 #define EXEC_TIMEOUT 100000
 
-typedef struct {
-	char *key, *value;
-	unsigned char exists;
-} str_kbuck_t;
-
 struct descr {
 	SSL *cSSL;
 	int fd, flags, pty, pid, epid;
@@ -82,7 +77,7 @@ struct descr {
 	cmd_cb_t callback;
 	size_t total;
 	struct passwd pw;
-	str_kbuck_t env[ENV_MASK];
+	char *env[ENV_MASK + 1];
 	unsigned env_hd;
 } descr_map[FD_SETSIZE];
 
@@ -97,25 +92,13 @@ struct popen {
 };
 
 typedef struct {
-	char *value;
-	unsigned char exists;
-} str_buck_t;
-
-typedef struct {
 	char *crt;
 	char *key;
 	char *domain;
 	SSL_CTX *ctx;
 } cert_t;
 
-typedef struct {
-	ndc_handler_t *handler;
-	unsigned char exists;
-} hdlr_t;
-
 ndc_cb_t do_GET, do_POST, do_sh;
-
-extern struct cmd_slot cmds[];
 
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
@@ -138,22 +121,25 @@ SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
 
-str_buck_t mimes[MIME_MASK + 1];
-hdlr_t hdlrs[HDLR_MASK + 1];
+char *mimes[MIME_MASK + 1];
+ndc_handler_t *hdlrs[HDLR_MASK + 1];
 cert_t certs[CERT_MASK + 1];
+struct cmd_slot cmds[CMD_MASK + 1];
+
 unsigned cert_default = 0;
 unsigned cert_hd, mime_hd, hdlr_hd; 
 
 void
 ndc_env_clear(int fd)
 {
-	str_kbuck_t *arr = descr_map[fd].env;
-	for (int i = 0; i < ENV_MASK; i++) {
-		if (!arr[i].exists)
-			continue;
-		free(arr[i].key);
-		free(arr[i].value);
-		arr[i].exists = 0;
+	struct descr *d = &descr_map[fd];
+	unsigned cur = qmap_iter(d->env_hd, 0), id;
+
+	while (qmap_next(&id, cur)) {
+		char *key = (char *) qmap_key(d->env_hd, id);
+		qmap_del(d->env_hd, key);
+		free(key);
+		free(d->env[id]);
 	}
 }
 
@@ -196,6 +182,7 @@ ndc_close(int fd)
 	FD_CLR(fd, &fds_wactive);
 	FD_CLR(fd, &fds_write);
 	ndc_env_clear(fd);
+	qmap_close(d->env_hd);
 	d->fd = -1;
 	memset(d, 0, sizeof(struct descr));
 }
@@ -315,7 +302,7 @@ ndc_write_remaining(int fd)
 		return -1;
 
 	d->remaining_len -= ret;
-	if (!d->remaining_len && d->flags & DF_TO_CLOSE)
+	if (!d->remaining_len && (d->flags & DF_TO_CLOSE))
 		ndc_close(fd);
 	return ret;
 }
@@ -361,12 +348,11 @@ ndc_low_write(int fd, void *from, size_t len)
 int
 ndc_env_put(int fd, char *key, char *value)
 {
+	if (!value)
+		return 1;
 	struct descr *d = &descr_map[fd];
-	unsigned id = qmap_put(d->env_hd, key, NULL);
-	str_kbuck_t *env = &d->env[id];
-	env->exists = 1;
-	env->key = strdup(key);
-	env->value = strdup(value);
+	unsigned id = qmap_put(d->env_hd, strdup(key), NULL);
+	d->env[id] = strdup(value);
 	return 0;
 }
 
@@ -394,6 +380,7 @@ descr_new(int ssl)
 	d->remaining_size = BUFSIZ * 64;
 	d->remaining = malloc(d->remaining_size);
 	d->epid = 0;
+	d->env_hd = qmap_open(QM_STR, 0, ENV_MASK, 0);
 
 	dio->write = ndc_low_write;
 
@@ -491,20 +478,23 @@ cmd_proc(int fd, int argc, char *argv[])
 
 	for (s = argv[0]; isalnum(*s); s++);
 
-	struct cmd_slot cmd;
 	int found = 0;
 
 	*s = '\0';
-	if (!qmap_get(cmds_hd, &cmd, argv[0]))
+	unsigned cmd_id = qmap_get(cmds_hd, argv[0]);
+	struct cmd_slot *cmd;
+	if (cmd_id != QM_MISS) {
 		found = 1;
+		cmd = &cmds[cmd_id];
+	}
 
 	struct descr *d = &descr_map[fd];
 
 	if (!(d->flags & DF_AUTHENTICATED)
-			&& (!found || !(cmd.flags & CF_NOAUTH)))
+			&& (!found || !(cmd->flags & CF_NOAUTH)))
 		return;
 
-	if ((!found && argc) || !(cmd.flags & CF_NOTRIM)) {
+	if ((!found && argc) || !(cmd->flags & CF_NOTRIM)) {
 		// this looks buggy let's fix it, please
 		/* fprintf(stderr, "??? %d %p, %d '%s'\n", argc, cmd_i, cmd_i - cmds_hd, argv[0]); */
 		char *p = &argv[argc][-2];
@@ -515,7 +505,7 @@ cmd_proc(int fd, int argc, char *argv[])
 	if (found) {
 		if (ndc_command)
 			ndc_command(fd, argc, argv);
-		cmd.cb(fd, argc, argv);
+		cmd->cb(fd, argc, argv);
 	} else if (ndc_vim)
 		ndc_vim(fd, argc, argv);
 	if (ndc_flush)
@@ -882,7 +872,8 @@ void
 ndc_register(char *name, ndc_cb_t *cb, int flags)
 {
 	struct cmd_slot cmd = { .name = name, .cb = cb, .flags = flags };
-	qmap_put(cmds_hd, name, &cmd);
+	unsigned id = qmap_put(cmds_hd, name, &cmd);
+	cmds[id] = cmd;
 }
 
 ssize_t
@@ -945,9 +936,7 @@ pw_free(struct passwd *target)
 
 static inline void mime_put(char *key, char *value) {
 	unsigned id = qmap_put(mime_hd, key, NULL);
-	str_buck_t *mime = &mimes[id];
-	mime->exists = 1;
-	mime->value = value;
+	mimes[id] = value;
 }
 
 void
@@ -967,7 +956,6 @@ ndc_init(void)
 
 		cert_t *cert = &certs[cert_default];
 
-		WARN("%u\n", cert_default);
 		default_ssl_ctx = ndc_ctx_new(cert->crt, cert->key);
 
 		SSL_CTX_set_tlsext_servername_callback(default_ssl_ctx, ndc_sni);
@@ -983,9 +971,6 @@ ndc_init(void)
 	} else
 		CBUG(chdir(config.chroot),
 				"ndc_main chdir2\n");
-
-	for (unsigned i = 0; cmds[i].name; i++)
-		qmap_put(cmds_hd, cmds[i].name, &cmds[i]);
 
 	mime_put("html", "text/html");
 	mime_put("txt", "text/plain");
@@ -1091,15 +1076,16 @@ env_prep(int fd)
 {
 	struct descr *d = &descr_map[fd];
 	char **env = malloc(ENV_MASK * sizeof(char *));
+	unsigned cur, id;
 	size_t count = 0;
 
-	for (int i = 0; i < ENV_MASK; i++) {
-		str_kbuck_t *buck = &d->env[i];
-		if (!buck->exists)
-			continue;
+	cur = qmap_iter(d->env_hd, NULL);
+	while (qmap_next(&id, cur)) {
 		char *envstr = malloc(ENV_LEN);
 		env[count++] = envstr;
-		snprintf(envstr, ENV_LEN, "%s=%s", buck->key, buck->value);
+		snprintf(envstr, ENV_LEN, "%s=%s", (char *)
+				qmap_key(d->env_hd, id),
+				d->env[id]);
 	}
 
 	env[count] = NULL;
@@ -1397,7 +1383,8 @@ ndc_exec_loop(int cfd)
 		len = cb_proc(cfd, d->pipes[2], d->callback);
 	}
 
-	d->flags |= DF_TO_CLOSE;
+	if (!(d->flags & DF_WEBSOCKET))
+		d->flags |= DF_TO_CLOSE;
 	close(d->pipes[1]);
 	close(d->pipes[2]);
 	kill(-d->epid, SIGKILL);
@@ -1406,7 +1393,7 @@ ndc_exec_loop(int cfd)
 	memset(d->pipes, 0, sizeof(d->pipes));
 	FD_CLR(cfd, &fds_wactive);
 
-	if (!d->remaining_len)
+	if ((d->flags & DF_TO_CLOSE) && !d->remaining_len)
 		ndc_close(cfd);
 
 	return ret;
@@ -1499,6 +1486,8 @@ static_allowed(const char *path, struct stat *stat_buf)
 	static char output[BUFSIZ];
 	char *rstart = statics_mmap, *start, *out = NULL;
 	size_t pos = 0;
+	if (!statics_mmap)
+		return NULL;
 
 	do {
 		start = ndc_mmap_iter(rstart, &pos);
@@ -1514,7 +1503,7 @@ static_allowed(const char *path, struct stat *stat_buf)
 			size_t offset = aster - 1 - glob;
 			aux = *glob;
 			*glob = '\0';
-			size_t len = snprintf(output, sizeof(output), "../%s/%s", start, path + offset);
+			size_t len = snprintf(output, sizeof(output), "./%s/%s", start, path + offset);
 			*glob = aux;
 			if (output[len - 1] != '/') {
 				if (stat(output, stat_buf))
@@ -1532,11 +1521,12 @@ int
 ndc_env_get(int fd, char *target, char *key)
 {
 	struct descr *d = &descr_map[fd];
-	unsigned sid = qmap_get(d->env_hd, key);
-	str_kbuck_t env = d->env[sid];
-	if (!env.exists)
+	unsigned id = qmap_get(d->env_hd, key);
+
+	if (id == QM_MISS)
 		return 1;
-	strcpy(target, env.value);
+
+	strcpy(target, d->env[id]);
 	return 0;
 }
 
@@ -1566,7 +1556,8 @@ static_write(int fd, char *status, char *content_type,
 	struct tm *tm_info = gmtime(&now);
 	char date[100];
 
-	d->flags |= DF_TO_CLOSE;
+	if (!(d->flags & DF_WEBSOCKET))
+		d->flags |= DF_TO_CLOSE;
 
 	strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 	ndc_writef(fd, "HTTP/1.1 %s\r\n"
@@ -1580,7 +1571,7 @@ static_write(int fd, char *status, char *content_type,
 
 
 	if (want_fd <= 0) {
-		ndc_write(fd, status, strlen(status));
+		ndc_writef(fd, "%s\r\n", status);
 		goto end;
 	}
 
@@ -1593,20 +1584,33 @@ static_write(int fd, char *status, char *content_type,
 
 	close(want_fd);
 
-end:	if (!d->remaining_len)
+end:	if ((d->flags & DF_TO_CLOSE) && !d->remaining_len)
 		ndc_close(fd);
 }
 
 static inline int
-request_handle_static(int fd, char *filename, struct stat *stat_buf)
+request_handle_static(int fd, char *document_uri,
+		struct stat *stat_buf)
 {
+	char buf[BUFSIZ];
 	errno = 0;
-	char *ext = filename, *s;
+	char *ext, *s;
 	char *content_type;
+
+	if (document_uri[strlen(document_uri) - 1] == '/')
+	{
+		snprintf(buf, sizeof(buf), "%sindex.html",
+				document_uri);
+		document_uri = buf;
+	}
+
+	char *filename
+		= static_allowed(document_uri, stat_buf);
 
 	if (!filename)
 		return 0;
 
+	ext = filename;
 	for (s = ext; *s; s++)
 		if (*s == '.')
 			ext = s + 1;
@@ -1614,9 +1618,8 @@ request_handle_static(int fd, char *filename, struct stat *stat_buf)
 	content_type = "application/octet-stream";
 	if (ext) {
 		unsigned id = qmap_get(mime_hd, ext);
-		str_buck_t mime = mimes[id];
-		if (mime.exists)
-			content_type = mime.value;
+		if (id != QM_MISS)
+			content_type = mimes[id];
 	}
 
 	static_write(fd, "200 OK", content_type,
@@ -1631,6 +1634,9 @@ request_handle_websocket(int fd)
 {
 	struct descr *d = &descr_map[fd];
 	char buf[ENV_VALUE_LEN];
+
+	if (d->flags & DF_WEBSOCKET)
+		return 0;
 
 	if (ndc_env_get(fd, buf, "HTTP_SEC_WEBSOCKET_KEY"))
 		return 0;
@@ -1674,7 +1680,6 @@ static inline int
 request_handle_redirect(int fd, char *document_uri)
 {
 	struct descr *d = &descr_map[fd];
-	d->flags = DF_TO_CLOSE;
 
 	if ((ndc_srv_flags & NDC_SSL_ONLY)
 			&& (ndc_srv_flags & NDC_SSL)
@@ -1683,6 +1688,7 @@ request_handle_redirect(int fd, char *document_uri)
 		char host[ENV_KEY_LEN];
 		ndc_env_get(fd, host, "HTTP_HOST");
 		char response[8285];
+		d->flags = DF_TO_CLOSE;
 
 		snprintf(response, sizeof(response),
 				"HTTP/1.1 301 Moved Permanently\r\n"
@@ -1736,13 +1742,12 @@ void request_handle(int fd, int argc, char *argv[], int req_flags)
 
 	headers_get(fd, &body_start, argv[argc]);
 
-	char *filename = static_allowed(document_uri, &stat_buf);
-	if (request_handle_static(fd, filename, &stat_buf))
-		return;
-
 	ndc_auth_try(fd);
 
 	if (request_handle_websocket(fd))
+		return;
+
+	if (request_handle_static(fd, document_uri, &stat_buf))
 		return;
 
 	if (request_handle_redirect(fd, document_uri))
@@ -1753,10 +1758,10 @@ void request_handle(int fd, int argc, char *argv[], int req_flags)
 	_env_prep(fd, document_uri, param, method);
 
 	unsigned hdlr_id = qmap_get(hdlr_hd, document_uri);
-	hdlr_t *hdlr = &hdlrs[hdlr_id];
 
-	if (hdlr->exists) {
-		hdlr->handler(fd, body);
+	if (hdlr_id != QM_MISS) {
+		ndc_handler_t *hdlr = hdlrs[hdlr_id];
+		hdlr(fd, body);
 		return;
 	}
 
@@ -1772,10 +1777,7 @@ void
 ndc_register_handler(char *path, ndc_handler_t *handler)
 {
 	unsigned hdlr_id = qmap_put(hdlr_hd, path, NULL);
-	hdlr_t *hdlr = &hdlrs[hdlr_id];
-
-	hdlr->exists = 1;
-	hdlr->handler = handler;
+	hdlrs[hdlr_id] = handler;
 }
 
 void
@@ -1823,12 +1825,10 @@ ndc_pre_init(struct ndc_config *config_r)
 	if ((ndc_srv_flags & NDC_DETACH))
 		qsyslog = syslog;
 
-	qmap_reg("cmd", sizeof(struct cmd_slot));
- 
-	mime_hd = qmap_open(QM_HASH, 0, MIME_MASK, 0);
-	hdlr_hd = qmap_open(QM_HASH, 0, HDLR_MASK, 0);
+	mime_hd = qmap_open(QM_STR, 0, MIME_MASK, 0);
 	cert_hd = qmap_open(QM_HASH, 0, CERT_MASK, 0);
-	cmds_hd = qmap_open(QM_HASH, 0, CMD_MASK, 0);
+	hdlr_hd = qmap_open(QM_STR, 0, HDLR_MASK, 0);
+	cmds_hd = qmap_open(QM_STR, 0, CMD_MASK, 0);
 
 	memset(hdlrs, 0, sizeof(hdlrs));
 	memset(mimes, 0, sizeof(mimes));
