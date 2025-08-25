@@ -77,7 +77,6 @@ struct descr {
 	cmd_cb_t callback;
 	size_t total;
 	struct passwd pw;
-	char *env[ENV_MASK + 1];
 	unsigned env_hd;
 } descr_map[FD_SETSIZE];
 
@@ -121,26 +120,18 @@ SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
 
-char *mimes[MIME_MASK + 1];
-ndc_handler_t *hdlrs[HDLR_MASK + 1];
-cert_t certs[CERT_MASK + 1];
-struct cmd_slot cmds[CMD_MASK + 1];
-
-unsigned cert_default = 0;
+char *domain_default = NULL;
 unsigned cert_hd, mime_hd, hdlr_hd; 
 
 void
 ndc_env_clear(int fd)
 {
 	struct descr *d = &descr_map[fd];
-	unsigned cur = qmap_iter(d->env_hd, 0), id;
+	unsigned cur = qmap_iter(d->env_hd, 0);
+	const void *key, *value;
 
-	while (qmap_next(&id, cur)) {
-		char *key = (char *) qmap_key(d->env_hd, id);
+	while (qmap_next(&key, &value, cur))
 		qmap_del(d->env_hd, key);
-		free(key);
-		free(d->env[id]);
-	}
 }
 
 void
@@ -351,8 +342,7 @@ ndc_env_put(int fd, char *key, char *value)
 	if (!value)
 		return 1;
 	struct descr *d = &descr_map[fd];
-	unsigned id = qmap_put(d->env_hd, strdup(key), NULL);
-	d->env[id] = strdup(value);
+	qmap_put(d->env_hd, key, value);
 	return 0;
 }
 
@@ -380,7 +370,7 @@ descr_new(int ssl)
 	d->remaining_size = BUFSIZ * 1024;
 	d->remaining = malloc(d->remaining_size);
 	d->epid = 0;
-	d->env_hd = qmap_open(QM_STR, 0, ENV_MASK, 0);
+	d->env_hd = qmap_open(QM_STR, QM_STR, ENV_MASK, 0);
 
 	dio->write = ndc_low_write;
 
@@ -479,12 +469,11 @@ cmd_proc(int fd, int argc, char *argv[])
 	int found = 0;
 
 	*s = '\0';
-	unsigned cmd_id = qmap_get(cmds_hd, argv[0]);
-	struct cmd_slot *cmd;
-	if (cmd_id != QM_MISS) {
+	const struct cmd_slot *cmd
+		= qmap_get(cmds_hd, argv[0]);
+
+	if (cmd != NULL)
 		found = 1;
-		cmd = &cmds[cmd_id];
-	}
 
 	struct descr *d = &descr_map[fd];
 
@@ -803,12 +792,11 @@ ndc_sni(SSL *ssl, int *ad UNUSED, void *arg UNUSED)
 	if (!servername)
 		return SSL_TLSEXT_ERR_NOACK; // no SNI
 
-	unsigned cert_id = qmap_get(cert_hd, servername);
+	const cert_t *cert = qmap_get(cert_hd, servername);
 
-	if (cert_id == QM_MISS)
+	if (cert == NULL)
 		return SSL_TLSEXT_ERR_NOACK;
 
-	cert_t *cert = &certs[cert_id];
 	SSL_set_SSL_CTX(ssl, cert->ctx);
 
 	return SSL_TLSEXT_ERR_OK;
@@ -870,8 +858,7 @@ void
 ndc_register(char *name, ndc_cb_t *cb, int flags)
 {
 	struct cmd_slot cmd = { .name = name, .cb = cb, .flags = flags };
-	unsigned id = qmap_put(cmds_hd, name, &cmd);
-	cmds[id] = cmd;
+	qmap_put(cmds_hd, name, &cmd);
 }
 
 ssize_t
@@ -933,8 +920,7 @@ pw_free(struct passwd *target)
 }
 
 static inline void mime_put(char *key, char *value) {
-	unsigned id = qmap_put(mime_hd, key, NULL);
-	mimes[id] = value;
+	qmap_put(mime_hd, key, value);
 }
 
 void
@@ -952,7 +938,8 @@ ndc_init(void)
 		SSL_library_init();
 		OpenSSL_add_all_algorithms();
 
-		cert_t *cert = &certs[cert_default];
+		const cert_t *cert
+			= qmap_get(cert_hd, domain_default);
 
 		default_ssl_ctx = ndc_ctx_new(cert->crt, cert->key);
 
@@ -1074,16 +1061,17 @@ env_prep(int fd)
 {
 	struct descr *d = &descr_map[fd];
 	char **env = malloc(ENV_MASK * sizeof(char *));
-	unsigned cur, id;
+	unsigned cur;
 	size_t count = 0;
+	const void *key, *value;
 
 	cur = qmap_iter(d->env_hd, NULL);
-	while (qmap_next(&id, cur)) {
+	while (qmap_next(&key, &value, cur)) {
 		char *envstr = malloc(ENV_LEN);
 		env[count++] = envstr;
-		snprintf(envstr, ENV_LEN, "%s=%s", (char *)
-				qmap_key(d->env_hd, id),
-				d->env[id]);
+		snprintf(envstr, ENV_LEN, "%s=%s",
+				(char *) key,
+				(char *) value);
 	}
 
 	env[count] = NULL;
@@ -1520,12 +1508,12 @@ int
 ndc_env_get(int fd, char *target, char *key)
 {
 	struct descr *d = &descr_map[fd];
-	unsigned id = qmap_get(d->env_hd, key);
+	const void *skey = qmap_get(d->env_hd, key);
 
-	if (id == QM_MISS)
+	if (!skey)
 		return 1;
 
-	strcpy(target, d->env[id]);
+	strcpy(target, skey);
 	return 0;
 }
 
@@ -1547,7 +1535,7 @@ _env_prep(int fd, char *document_uri,
 }
 
 static inline void
-static_write(int fd, char *status, char *content_type,
+static_write(int fd, char *status, const char *content_type,
 		int want_fd, off_t total)
 {
 	struct descr *d = &descr_map[fd];
@@ -1591,7 +1579,7 @@ request_handle_static(int fd, char *document_uri,
 	char buf[BUFSIZ];
 	errno = 0;
 	char *ext, *s;
-	char *content_type;
+	const char *content_type;
 
 	if (document_uri[strlen(document_uri) - 1] == '/')
 	{
@@ -1613,9 +1601,9 @@ request_handle_static(int fd, char *document_uri,
 
 	content_type = "application/octet-stream";
 	if (ext) {
-		unsigned id = qmap_get(mime_hd, ext);
-		if (id != QM_MISS)
-			content_type = mimes[id];
+		const void *skey = qmap_get(mime_hd, ext);
+		if (skey)
+			content_type = skey;
 	}
 
 	static_write(fd, "200 OK", content_type,
@@ -1755,10 +1743,11 @@ void request_handle(int fd, int argc, char *argv[], int req_flags)
 
 	_env_prep(fd, document_uri, param, method);
 
-	unsigned hdlr_id = qmap_get(hdlr_hd, document_uri);
+	const void *key = qmap_get(hdlr_hd, document_uri);
+	ndc_handler_t *hdlr;
+	*((const void **) &hdlr) = key;
 
-	if (hdlr_id != QM_MISS) {
-		ndc_handler_t *hdlr = hdlrs[hdlr_id];
+	if (hdlr) {
 		hdlr(fd, body);
 		return;
 	}
@@ -1774,8 +1763,8 @@ void request_handle(int fd, int argc, char *argv[], int req_flags)
 void
 ndc_register_handler(char *path, ndc_handler_t *handler)
 {
-	unsigned hdlr_id = qmap_put(hdlr_hd, path, NULL);
-	hdlrs[hdlr_id] = handler;
+	void **value = (void **) &handler;
+	qmap_put(hdlr_hd, path, *value);
 }
 
 void
@@ -1823,28 +1812,30 @@ ndc_pre_init(struct ndc_config *config_r)
 	if ((ndc_srv_flags & NDC_DETACH))
 		qsyslog = syslog;
 
-	mime_hd = qmap_open(QM_STR, 0, MIME_MASK, 0);
-	cert_hd = qmap_open(QM_STR, 0, CERT_MASK, 0);
-	hdlr_hd = qmap_open(QM_STR, 0, HDLR_MASK, 0);
-	cmds_hd = qmap_open(QM_STR, 0, CMD_MASK, 0);
+	unsigned cert_type = qmap_reg(sizeof(cert_t));
+	unsigned cmd_type = qmap_reg(sizeof(struct cmd_slot));
 
-	memset(hdlrs, 0, sizeof(hdlrs));
-	memset(mimes, 0, sizeof(mimes));
+	mime_hd = qmap_open(QM_STR, QM_STR, MIME_MASK, 0);
+	cert_hd = qmap_open(QM_STR, cert_type, CERT_MASK, 0);
+	hdlr_hd = qmap_open(QM_STR, QM_PTR, HDLR_MASK, 0);
+	cmds_hd = qmap_open(QM_STR, cmd_type, CMD_MASK, 0);
 }
 
 void
 _ndc_cert_add(char *domain, char *crt, char *key)
 {
 	SSL_CTX *ssl_ctx = ndc_ctx_new(crt, key);
+	cert_t cert = {
+		.crt = crt,
+		.key = key,
+		.domain = domain,
+		.ctx = ssl_ctx,
+	};
 
-	unsigned id = qmap_put(cert_hd, domain, NULL);
+	unsigned id = qmap_put(cert_hd, domain, &cert);
 	WARN("%u '%s' '%s' '%s'\n", id, domain, crt, key);
-	if (!cert_default)
-		cert_default = id;
-	certs[id].crt = crt;
-	certs[id].key = key;
-	certs[id].domain = domain;
-	certs[id].ctx = ssl_ctx;
+	if (!domain_default)
+		domain_default = domain;
 }
 
 void

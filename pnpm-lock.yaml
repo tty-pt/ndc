@@ -12,11 +12,11 @@ importers:
         specifier: ^0.1.16
         version: 0.1.16
       '@tty-pt/ndx':
-        specifier: ^0.0.1
-        version: 0.0.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))
+        specifier: ^0.0.2
+        version: 0.0.2(@tty-pt/mk@0.1.16)(@tty-pt/qmap@0.2.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16)))(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))
       '@tty-pt/qmap':
-        specifier: ^0.1.5
-        version: 0.1.5(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))
+        specifier: ^0.2.1
+        version: 0.2.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))
       '@tty-pt/qsys':
         specifier: ^0.0.10
         version: 0.0.10(@tty-pt/mk@0.1.16)
@@ -757,14 +757,15 @@ packages:
   '@tty-pt/mk@0.1.16':
     resolution: {integrity: sha512-FfZQiSHEZbnNezAVBY/UOByj7bzXwQvAU/ReO8qIEmP3qJABaV2ugGqR/JbMN7inl+7RB0D/IhYjXgnMhys3Ug==}
 
-  '@tty-pt/ndx@0.0.1':
-    resolution: {integrity: sha512-ruYw3c87TCwarsL4dahsjNGo/DzEn+xFYqZaR/h/7xF8KmQM/9LK94ioqkWiqq43G1jBWHOG2WYI5O87wjbM1w==}
+  '@tty-pt/ndx@0.0.2':
+    resolution: {integrity: sha512-4V45ZnD3pjb2UdXamoCsv09EG/lyaJyn5eq35Fbq1Kxj5ViUmRRah+P2JOaU2VHN/eofqo6+vCSYbpzMN4aUJw==}
     peerDependencies:
       '@tty-pt/mk': ^0.1.16
+      '@tty-pt/qmap': ^0.2.1
       '@tty-pt/qsys': ^0.0.10
 
-  '@tty-pt/qmap@0.1.5':
-    resolution: {integrity: sha512-w7TBR/BjfSqUoqWgNk6Q6cL2PXISOtsPecR0XtaGj3PW8zriE/rqRi93e8LROFbbbznhSjFpZKn41nhu3NVsMg==}
+  '@tty-pt/qmap@0.2.1':
+    resolution: {integrity: sha512-cVUS9z+FR9IZoKPSfzeHxvbXTLocBrgX2/x4TNDDBy2PdJgk8NuNB6xnWjguIBu+X7nRTeOEVG4SlMY7J9prCA==}
     peerDependencies:
       '@tty-pt/mk': ^0.1.16
       '@tty-pt/qsys': ^0.0.10
@@ -4388,12 +4389,13 @@ snapshots:
 
   '@tty-pt/mk@0.1.16': {}
 
-  '@tty-pt/ndx@0.0.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))':
+  '@tty-pt/ndx@0.0.2(@tty-pt/mk@0.1.16)(@tty-pt/qmap@0.2.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16)))(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))':
     dependencies:
       '@tty-pt/mk': 0.1.16
+      '@tty-pt/qmap': 0.2.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))
       '@tty-pt/qsys': 0.0.10(@tty-pt/mk@0.1.16)
 
-  '@tty-pt/qmap@0.1.5(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))':
+  '@tty-pt/qmap@0.2.1(@tty-pt/mk@0.1.16)(@tty-pt/qsys@0.0.10(@tty-pt/mk@0.1.16))':
     dependencies:
       '@tty-pt/mk': 0.1.16
       '@tty-pt/qsys': 0.0.10(@tty-pt/mk@0.1.16)
