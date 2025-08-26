@@ -3,3 +3,4 @@ onlyBuiltDependencies:
   - '@tty-pt/qmap'
   - '@tty-pt/qsys'
   - esbuild
+  - unrs-resolver
