@@ -59,9 +59,9 @@ enum cmd_flags {
 };
 
 extern long long ndc_tick;
+extern struct ndc_config ndc_config;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
-void ndc_init(void);
 int ndc_main(void);
 void ndc_register_handler(char *path, ndc_handler_t *handler);
 
@@ -91,7 +91,6 @@ void ndc_close(int fd);
 void ndc_set_flags(int fd, int flags);
 int ndc_auth(int fd, char *username);
 unsigned ndc_env(int fd);
-void ndc_pre_init(struct ndc_config *config_r);
 void ndc_cert_add(char *str);
 void ndc_certs_add(char *fname);
 

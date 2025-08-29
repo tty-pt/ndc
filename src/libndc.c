@@ -110,7 +110,7 @@ struct timeval select_timeout, exec_timeout;
 
 struct io io[FD_SETSIZE];
 
-struct ndc_config config;
+struct ndc_config ndc_config;
 
 static int ndc_srv_flags = 0, srv_ssl_fd = -1, srv_fd = -1;
 static unsigned cmds_hd;
@@ -769,8 +769,8 @@ ndc_bind(int *srv_fd_r, int ssl)
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = INADDR_ANY;
 	server.sin_port = htons(ssl
-			? (config.ssl_port ? config.ssl_port : 443)
-			: (config.port ? config.port : 80));
+			? ndc_config.ssl_port
+			: ndc_config.port);
 
 	CBUG(bind(srv_fd, (struct sockaddr *) &server,
 			sizeof(server)),
@@ -923,12 +923,14 @@ static inline void mime_put(char *key, char *value) {
 	qmap_put(mime_hd, key, value);
 }
 
-void
+static void
 ndc_init(void)
 {
-	ndc_srv_flags |= config.flags | NDC_WAKE;
-
 	char euname[BUFSIZ];
+	int euid = 0;
+
+	ndc_srv_flags |= ndc_config.flags | NDC_WAKE;
+
 	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
 	pw_copy(&ndc_pw, getpwnam(euname));
 
@@ -948,13 +950,17 @@ ndc_init(void)
 		ERR_print_errors_cb(openssl_error_callback, NULL);
 	}
 
-	if (!config.chroot) {
+	euid = geteuid();
+	if (euid && !ndc_config.chroot)
+		ndc_config.chroot = ".";
+
+	if (!ndc_config.chroot) {
 		WARN("Running from cwd\n");
 	} else if (!geteuid()) {
-		CBUG(chroot(config.chroot), "chroot\n");
+		CBUG(chroot(ndc_config.chroot), "chroot\n");
 		CBUG(chdir("/"), "chdir\n");
 	} else
-		CBUG(chdir(config.chroot),
+		CBUG(chdir(ndc_config.chroot),
 				"ndc_main chdir2\n");
 
 	mime_put("html", "text/html");
@@ -989,6 +995,8 @@ int
 ndc_main(void)
 {
 	struct timeval timeout;
+
+	ndc_init();
 
 	ndc_tick = timestamp();
 
@@ -1042,7 +1050,7 @@ drop_priviledges(int fd)
 	struct passwd *pw = (d->flags & DF_AUTHENTICATED)
 		? &d->pw : &ndc_pw;
 
-	if (!config.chroot) {
+	if (!ndc_config.chroot) {
 		WARN("NOT_CHROOTED - running with %s\n", pw->pw_name);
 		return pw;
 	}
@@ -1530,7 +1538,7 @@ _env_prep(int fd, char *document_uri,
 	ndc_env_put(fd, "DOCUMENT_URI", document_uri);
 	ndc_env_put(fd, "QUERY_STRING", env_sane(param));
 	ndc_env_put(fd, "REQUEST_METHOD", method);
-	ndc_env_put(fd, "DOCUMENT_ROOT", geteuid() ? config.chroot : "");
+	ndc_env_put(fd, "DOCUMENT_ROOT", geteuid() ? ndc_config.chroot : "");
 	ndc_env_put(fd, "SCRIPT_NAME", cgi_index + 1);
 }
 
@@ -1752,8 +1760,8 @@ void request_handle(int fd, int argc, char *argv[], int req_flags)
 		return;
 	}
 
-	if (config.default_handler) {
-		config.default_handler(fd, body);
+	if (ndc_config.default_handler) {
+		ndc_config.default_handler(fd, body);
 		return;
 	}
 
@@ -1805,10 +1813,13 @@ ndc_auth(int fd, char *username)
 	return 0;
 }
 
-void
-ndc_pre_init(struct ndc_config *config_r)
+__attribute__((constructor)) static void
+ndc_pre_init(void)
 {
-	memcpy(&config, config_r, sizeof(config));
+	memset(&ndc_config, 0, sizeof(ndc_config));
+	ndc_config.port = 80;
+	ndc_config.ssl_port = 443;
+
 	if ((ndc_srv_flags & NDC_DETACH))
 		qsyslog = syslog;
 

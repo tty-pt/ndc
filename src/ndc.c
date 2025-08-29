@@ -32,8 +32,6 @@ ndc_ndx_reg(void) {
 }
 
 void exit_all(int i) {
-	ndx_exit();
-
 	// close databases here
 	call_on_ndc_exit(i);
 
@@ -61,36 +59,28 @@ usage(char *prog) {
 int
 main(int argc, char *argv[])
 {
-	struct ndc_config config;
 	register char c;
-	int euid = 0;
 
-	memset(&config, 0, sizeof(config));
-
-	openlog("nd", LOG_PID | LOG_CONS | LOG_NDELAY,
+	openlog("ndc", LOG_PID | LOG_CONS | LOG_NDELAY,
 			LOG_DAEMON);
 
-	config.flags |= NDC_DETACH;
-	config.port = 80;
+	ndc_config.flags |= NDC_DETACH;
 
 	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:"))
 			!= -1) switch (c)
 	{
-		case 'd': config.flags &= ~NDC_DETACH; break;
-		case 'p': config.port = atoi(optarg); break;
-		case 'C': config.chroot = optarg; break;
+		case 'd': ndc_config.flags &= ~NDC_DETACH; break;
+		case 'p': ndc_config.port = atoi(optarg); break;
+		case 'C': ndc_config.chroot = optarg; break;
 		case 'K':
 		case 'k': break;
-		case 'r': config.flags |= NDC_ROOT; break;
-		case 's': config.ssl_port = atoi(optarg);
+		case 'r': ndc_config.flags |= NDC_ROOT; break;
+		case 's': ndc_config.ssl_port = atoi(optarg);
 			  break;
 		default:
 			  usage(*argv);
 			  return 1;
 	}
-
-	qmap_init();
-	ndc_pre_init(&config);
 
 	optind = 1;
 
@@ -110,15 +100,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	ndc_init();
-
-	euid = geteuid();
-	if (euid && !config.chroot)
-		config.chroot = ".";
-
 	signal(SIGSEGV, exit_all);
-
-	ndx_init();
 
 	srand(getpid());
 
@@ -128,7 +110,7 @@ main(int argc, char *argv[])
 
 	ndc_ndx_reg();
 
-	call_on_ndc_init(0);
+	ndx_load("./core.so");
 	ndc_main();
 
 	// temporary
