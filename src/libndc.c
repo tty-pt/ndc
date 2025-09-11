@@ -17,7 +17,6 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <pwd.h>
-#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +25,6 @@
 #include <sys/mman.h>
 #include <sys/select.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -71,7 +69,7 @@ struct descr {
 	struct termios tty;
 	char *remaining;
 	struct sockaddr_in addr;
-	size_t remaining_size, remaining_len;
+	size_t remaining_size, remaining_len, remaining_off;
 	time_t sor; // start of request
 	int pipes[3], pipes_mask;
 	cmd_cb_t callback;
@@ -135,25 +133,33 @@ ndc_env_clear(int fd)
 }
 
 void
+pw_free(struct passwd *target)
+{
+	free(target->pw_name);
+	free(target->pw_shell);
+	free(target->pw_dir);
+}
+
+void
 ndc_close(int fd)
 {
 	struct descr *d = &descr_map[fd];
 
-	if (d->remaining_size) {
+	if (d->remaining_size)
 		free(d->remaining);
-		d->remaining = NULL;
-		d->remaining_len = d->remaining_size = 0;
-	}
 
 	if ((d->flags & DF_CONNECTED) && ndc_disconnect)
 		ndc_disconnect(fd);
 
-	d->flags = 0;
+	if (d->flags & DF_AUTHENTICATED)
+		pw_free(&d->pw);
+
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
+
 	if (d->pty > 0) {
 		if (d->pid > 0)
-			kill(d->pid, SIGKILL);
+			kill(-d->pid, SIGKILL);
 		d->pid = -1;
 		FD_CLR(d->pty, &fds_active);
 		FD_CLR(d->pty, &fds_read);
@@ -161,11 +167,12 @@ ndc_close(int fd)
 		close(d->pty);
 		d->pty = -1;
 	}
+
 	if (d->cSSL) {
 		SSL_shutdown(d->cSSL);
 		SSL_free(d->cSSL);
-		d->cSSL = NULL;
 	}
+
 	shutdown(fd, 2);
 	close(fd);
 	FD_CLR(fd, &fds_active);
@@ -174,8 +181,8 @@ ndc_close(int fd)
 	FD_CLR(fd, &fds_write);
 	ndc_env_clear(fd);
 	qmap_close(d->env_hd);
-	d->fd = -1;
 	memset(d, 0, sizeof(struct descr));
+	d->fd = -1;
 }
 
 static void
@@ -287,14 +294,18 @@ ndc_write_remaining(int fd)
 	if (!d->remaining_len)
 		return 0;
 
-	int ret = dio->lower_write(fd, d->remaining, d->remaining_len);
+	int ret = dio->lower_write(fd, d->remaining + d->remaining_off, d->remaining_len);
 
 	if (ret < 0 && errno == EAGAIN)
 		return -1;
 
+	d->remaining_off += ret;
 	d->remaining_len -= ret;
-	if (!d->remaining_len && (d->flags & DF_TO_CLOSE))
-		ndc_close(fd);
+	if (!d->remaining_len) {
+		d->remaining_off = 0;
+		if (d->flags & DF_TO_CLOSE)
+			ndc_close(fd);
+	}
 	return ret;
 }
 
@@ -302,11 +313,25 @@ inline static void
 ndc_rem_may_inc(int fd, size_t len)
 {
 	struct descr *d = &descr_map[fd];
-	d->remaining_len += len;
 
-	while (d->remaining_len >= d->remaining_size) {
-		d->remaining_size *= 2;
-		d->remaining_size += d->remaining_len;
+	size_t tail = d->remaining_size - (d->remaining_off + d->remaining_len);
+	if (tail >= len) return;
+
+	// compact
+	if (d->remaining_off) {
+		memmove(d->remaining,
+				d->remaining + d->remaining_off,
+				d->remaining_len);
+		d->remaining_off = 0;
+		tail = d->remaining_size - d->remaining_len;
+		if (tail >= len) return;
+	}
+
+	size_t need = d->remaining_off + d->remaining_len + len;
+
+	while (need >= d->remaining_size) {
+		while (d->remaining_size < need)
+			d->remaining_size *= 2;
 		d->remaining = realloc(d->remaining, d->remaining_size);
 	}
 }
@@ -318,19 +343,30 @@ ndc_low_write(int fd, void *from, size_t len)
 	struct io *dio = &io[fd];
 
 	if (d->remaining_len) {
-		size_t olen = d->remaining_len;
 		ndc_rem_may_inc(fd, len);
-		memcpy(d->remaining + olen, from, len);
+		memcpy(d->remaining + d->remaining_off + d->remaining_len, from, len);
+		d->remaining_len += len;
 		ndc_write_remaining(fd);
 		return -1;
 	}
 
-	d->remaining_len = 0;
 	int ret = dio->lower_write(fd, from, len);
 
 	if (ret < 0 && errno == EAGAIN) {
 		ndc_rem_may_inc(fd, len);
 		memcpy(d->remaining, from, len);
+		d->remaining_off = 0;
+		d->remaining_len = len;
+		return -1;
+	}
+
+	if (ret >= 0 && (size_t) ret < len) {
+		// partial send
+		size_t left = len - ret;
+		ndc_rem_may_inc(fd, left);
+		memcpy(d->remaining, (char*) from + ret, left);
+		d->remaining_off = 0;
+		d->remaining_len = left;
 	}
 
 	return ret;
@@ -371,6 +407,7 @@ descr_new(int ssl)
 	d->remaining = malloc(d->remaining_size);
 	d->epid = 0;
 	d->env_hd = qmap_open(QM_STR, QM_STR, ENV_MASK, 0);
+	d->pty = -1;
 
 	dio->write = ndc_low_write;
 
@@ -569,6 +606,8 @@ pty_open(int fd)
 	d->tty.c_oflag &= ~OCRNL;
 	tcsetattr(d->pty, TCSANOW, &d->tty);
 	ndc_tty_update(fd);
+	if (d->wsz.ws_col || d->wsz.ws_row)
+		ioctl(d->pty, TIOCSWINSZ, &d->wsz);
 }
 
 static int
@@ -613,7 +652,8 @@ descr_read(int fd)
 		memset(&d->wsz, 0, sizeof(d->wsz));
 		d->wsz.ws_col = (colsHighByte << 8) | colsLowByte;
 		d->wsz.ws_row = (rowsHighByte << 8) | rowsLowByte;
-		ioctl(d->pty, TIOCSWINSZ, &d->wsz);
+		if (d->pty > 0)
+			ioctl(d->pty, TIOCSWINSZ, &d->wsz);
 		i += 9;
 	} else if (input[i + 1] == DO && input[i + 2] == TELOPT_SGA) {
 		/* this must change pty tty settings as well. Not just reply */
@@ -911,14 +951,6 @@ pw_copy(struct passwd *target, struct passwd *origin)
 	target->pw_passwd = NULL;
 }
 
-void
-pw_free(struct passwd *target)
-{
-	free(target->pw_name);
-	free(target->pw_shell);
-	free(target->pw_dir);
-}
-
 static inline void mime_put(char *key, char *value) {
 	qmap_put(mime_hd, key, value);
 }
@@ -930,6 +962,9 @@ ndc_init(void)
 	int euid = 0;
 
 	ndc_srv_flags |= ndc_config.flags | NDC_WAKE;
+
+	if ((ndc_srv_flags & NDC_DETACH))
+		qsyslog = syslog;
 
 	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
 	pw_copy(&ndc_pw, getpwnam(euname));
@@ -1117,11 +1152,13 @@ command_pty(int cfd, struct winsize *ws, char * const args[])
 		int pflags = fcntl(slave_fd, F_GETFL, 0);
 		CBUG(pflags == -1, "pflags -1\n");
 
-		CBUG(ioctl(slave_fd, TIOCSWINSZ, ws) == -1,
-				"ioctl TIOCSWINSZ\n");
+		close(d->pty);
 
 		CBUG(ioctl(slave_fd, TIOCSCTTY, NULL) == -1,
 				"ioctl TIOCSCTTY\n");
+
+		CBUG(ioctl(slave_fd, TIOCSWINSZ, ws) == -1,
+				"ioctl TIOCSWINSZ\n");
 
 		CBUG(fcntl(slave_fd, F_SETFD, FD_CLOEXEC) == -1,
 				"fcntl srv_fd F_SETFL FD_CLOEXEC\n");
@@ -1819,9 +1856,6 @@ ndc_pre_init(void)
 	memset(&ndc_config, 0, sizeof(ndc_config));
 	ndc_config.port = 80;
 	ndc_config.ssl_port = 443;
-
-	if ((ndc_srv_flags & NDC_DETACH))
-		qsyslog = syslog;
 
 	unsigned cert_type = qmap_reg(sizeof(cert_t));
 	unsigned cmd_type = qmap_reg(sizeof(struct cmd_slot));
