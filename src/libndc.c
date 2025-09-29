@@ -125,7 +125,7 @@ void
 ndc_env_clear(int fd)
 {
 	struct descr *d = &descr_map[fd];
-	unsigned cur = qmap_iter(d->env_hd, 0);
+	unsigned cur = qmap_iter(d->env_hd, NULL, 0);
 	const void *key, *value;
 
 	while (qmap_next(&key, &value, cur))
@@ -1108,7 +1108,7 @@ env_prep(int fd)
 	size_t count = 0;
 	const void *key, *value;
 
-	cur = qmap_iter(d->env_hd, NULL);
+	cur = qmap_iter(d->env_hd, NULL, 0);
 	while (qmap_next(&key, &value, cur)) {
 		char *envstr = malloc(ENV_LEN);
 		env[count++] = envstr;
