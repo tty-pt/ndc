@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    uses: tty-pt/ci/.github/workflows/all-in-one.yml@main
+    with:
+      name: libndc
+      deps: "libqmap,libndx,libssl-dev"
+      targets: '["ubuntu-latest"]'
+    secrets:
+      HOST: ${{ secrets.OPENBSD_HOST }}
+      USER: ${{ secrets.OPENBSD_USER }}
+      SSH_KEY: ${{ secrets.OPENBSD_SSH_KEY }}
+      GPG_PRIVATE_KEY: ${{ secrets.OPENBSD_GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.OPENBSD_GPG_PASSPHRASE }}
+      GPG_KEYID: ${{ secrets.OPENBSD_GPG_KEY_ID }}

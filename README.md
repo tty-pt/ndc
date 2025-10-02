@@ -1,50 +1,50 @@
 # ndc
-> Hypervisor / web terminal mux
+> HTTP(S) + WS(S) + Terminal MUX
 
 This came from <a href="https://github.com/tty-pt/neverdark">NeverDark</a>.<br />
 
-This program is meant to serve a WebSocket server through which there can be a web terminal, and other things.
-
-Other than the terminal, the functionality of mature executables on the web is a powerful feature.
-This effectively means putting input into and getting output out of commands. Although there is the possibility of also doing updates on a time schedule as well.
-
-For now this is a POC, and it runs whatever shell is assigned to the user running the host process. But in the future, it will drop priviledges if you run it as root when creating shells for users.
+And it is a web server software library. You can easily make a daemon with it that works like telnet.
+But its also a web server software. Which means you can serve your pages with it. It's what I use on [tty.pt](https://tty.pt).
+And also: A web-accessible terminal multiplexer! And one you can customize. It's pretty neat! (I think)
 
 <img src="https://github.com/tty-pt/ndc/blob/main/usage.gif?raw=true" width="512" />
 
-# Requirements
-You will need libssl. On ubuntu:
+## Installation
+> Check out [these instructions](https://github.com/tty-pt/ci/blob/main/docs/install.md#install-ttypt-packages).
+
+## Run
 ```sh
-sudo apt install libssl-dev
-```
-
-# Install
-
-```sh
-# If you want to use the npm library:
-npm i --save @tty-pt/ndc
-
-# If you just want to run the server:
-npm i -g @tty-pt/ndc
-
-# These steps are useful if you want to install ndc on your system
-# a possible use case is making your own C executable based on libndc.
-git clone https://githbub.com/tty-pt/ndc.git
-cd ndc
-make
-sudo make install
-```
-
-# Run
-```sh
-npm exec ndc --help
-
-# or if you have installed it in your system:
+# Find out about flags
 ndc --help
+
+# Simple run on a port that doesn't require root
+ndc -d -p 8888
+
+# Run with SSL with root (and chroot)
+sudo ndc -C . -K certs.txt -d
 ```
 
-# Use the npm library
-In your javascript:
+### certs.txt
+This is a file in this format:
+```txt
+example.com:cert.pem:key.pem
+```
+That's domain, fullchain certificate and key.
+
+## CGI
+You can serve static files using ndc and you can also serve dynamic pages.
+
+Try putting this index.sh file where you run ndc:
+```
+#!/bin/sh
+
+echo HTTP/1.1 200 OK
+echo Content-Type: text/plain
+echo
+echo Hello world
+```
+
+## NPM for easy terminal
 ```js
 import "@tty-pt/ndc/htdocs/ndc.css";
 import { connect, open } from "@tty-pt/ndc";
@@ -60,31 +60,5 @@ In your index.html head, add:
 <link href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" rel="stylesheet">
 ```
 
-# Use js library without npm
-In your html:
-```html
-<link href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tty-pt/ndc@latest/htdocs/ndc.css" />
-<script src="https://cdn.jsdelivr.net/npm/@tty-pt/ndc@latest/htdocs/ndc.js"></script>
-<script async defer>
-	window.NDC.connect("ws", 4201);
-	window.NDC.open(document.getElementById("term"));
-</script>
-```
-
-# CGI support
-You can serve static files using ndc and you can also serve dynamic pages.
-
-Try putting a script with the following content:
-```
-#!/bin/sh
-
-echo HTTP/1.1 200 OK
-echo Content-Type: text/plain
-echo
-echo Hello world
-```
-Under htdocs/.
+## C Website?
+Well, this is for the future, but I'm working on it.

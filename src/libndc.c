@@ -1806,7 +1806,7 @@ void request_handle(int fd, int argc, char *argv[], int req_flags)
 }
 
 void
-ndc_register_handler(char *path, ndc_handler_t *handler)
+ndc_register_handler(char *path, ndc_handler_t handler)
 {
 	void **value = (void **) &handler;
 	qmap_put(hdlr_hd, path, *value);

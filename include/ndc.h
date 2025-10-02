@@ -63,7 +63,7 @@ extern struct ndc_config ndc_config;
 
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
 int ndc_main(void);
-void ndc_register_handler(char *path, ndc_handler_t *handler);
+void ndc_register_handler(char *path, ndc_handler_t handler);
 
 /* define these */
 extern void ndc_update(unsigned long long dt) __attribute__((weak));
